@@ -29,6 +29,7 @@ You need **Node.js 22+** and **FFmpeg** (`ffplay` and `ffprobe` on your PATH).
 1. Copy `.env.example` to `.env` and fill it in:
    - `NVIDIA_API_KEY`: Lyra's brain. A free key from [build.nvidia.com](https://build.nvidia.com); the model is set by `LYRA_MODEL`.
    - `FISH_API_KEY` and the `FISH_VOICE_*` ids: the voices, from [fish.audio](https://fish.audio). Each character's voice is a Fish voice model.
+   - `YOUTUBE_API_KEY` (optional): a YouTube Data API v3 key for music videos behind Lyra while songs play. Without it, she shows the song's album artwork from iTunes.
 2. `npm install`
 3. `npm run holo`, then open **http://localhost:5177** and press **Go Live**.
 
@@ -37,7 +38,8 @@ You need **Node.js 22+** and **FFmpeg** (`ffplay` and `ffprobe` on your PATH).
 - **Radio / Podcast** buttons at the top left. Lyra can also switch between them herself.
 - **Volume sliders** for the music and Lyra's voice.
 - **Chat** on the right: type a name and a message.
-- Keys: `H` hides everything but Lyra, `B` full body, `V` lip sync or video loop, `M` mirror (for Pepper's ghost glass), `F` fullscreen.
+- **Streamer mode**: while a known song plays, its music video (muted, since the radio is the sound) or its album artwork fills the screen, and Lyra moves to the bottom-left corner like a facecam.
+- Keys: `H` hides everything but Lyra, `B` full body, `V` lip sync or video loop, `S` streamer mode on or off, `M` mirror (for Pepper's ghost glass), `F` fullscreen.
 
 ### Other ways to run her
 

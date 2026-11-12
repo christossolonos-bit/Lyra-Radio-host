@@ -15,6 +15,7 @@ import { createLyra, MODEL } from "./lyra.js";
 import { synthesize, VOICE_ID } from "./voice.js";
 import { createPodcast, TOPICS, PODCAST_NAME } from "./podcast.js";
 import { voiceOf, availableGuests, guestCard } from "./cast.js";
+import { songMedia } from "./media.js";
 import { findStations, splitStationTag, describeStation, nowPlayingTitle, pickOne } from "./radio.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -76,12 +77,21 @@ let nowPlaying = "";      // the current song, if the station shares it
 let recentSongs = [];     // the last few songs before it
 let nowPlayingAt = 0;     // when we last checked
 
+let songVisual = { type: "songmedia", title: "" }; // video / artwork for the current song
+
 function setNowPlaying(title) {
   if (title === nowPlaying) return false;
   if (nowPlaying) recentSongs = [nowPlaying, ...recentSongs].slice(0, 4);
   nowPlaying = title;
   console.log(`♪ ${title || "(no title)"}`);
   broadcast({ type: "nowplaying", title });
+  // find a music video / album art for it in the background, then send it to the page
+  songMedia(title).then((m) => {
+    if (title !== nowPlaying) return; // the song already changed again
+    songVisual = { type: "songmedia", title, ...m };
+    if (title) console.log(`  visuals: ${m.videoId ? `video ${m.videoId}` : "no video"}, ${m.art ? "artwork" : "no artwork"}`);
+    broadcast(songVisual);
+  });
   return Boolean(title);
 }
 
@@ -402,6 +412,7 @@ const server = http.createServer(async (req, res) => {
     res.write(`data: ${JSON.stringify({ type: "hello", live, mode, show: SHOW_NAME, podcast: PODCAST_NAME, model: MODEL })}\n\n`);
     if (station) res.write(`data: ${JSON.stringify(stationEvent())}\n\n`);
     if (nowPlaying) res.write(`data: ${JSON.stringify({ type: "nowplaying", title: nowPlaying })}\n\n`);
+    if (songVisual.title) res.write(`data: ${JSON.stringify(songVisual)}\n\n`);
     if (guest) res.write(`data: ${JSON.stringify({ type: "guest", ...guestCard(guest) })}\n\n`);
     clients.add(res);
     req.on("close", () => clients.delete(res));
