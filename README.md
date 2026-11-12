@@ -77,4 +77,4 @@ Scripts used to make the assets. The Python ones go through the series' `product
 
 ---
 
-Characters, images and voices are from the *Lyra AI* series.
+Characters, images and voices are from the *Lyra AI* series by Solonaras.
