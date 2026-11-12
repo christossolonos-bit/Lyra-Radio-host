@@ -11,11 +11,23 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { createLyra, MODEL } from "./lyra.js";
+import { createLyra, MODEL, episodeNews } from "./lyra.js";
 import { synthesize, VOICE_ID } from "./voice.js";
 import { createPodcast, TOPICS, PODCAST_NAME } from "./podcast.js";
 import { voiceOf, availableGuests, guestCard } from "./cast.js";
 import { songMedia } from "./media.js";
+import { connectLiveChat } from "./youtube.js";
+import { loadChannelSongs } from "./channel.js";
+import { noteVisit, aboutViewers, rememberFrom, saveFact } from "./memory.js";
+import { createRecorder } from "./recorder.js";
+import { newsBlock } from "./news.js";
+
+// "Viewer messages: ..." plus what Lyra remembers about those people.
+const viewerBlock = (messages, intro = "Viewer messages") => messages.length
+  ? ` ${intro}:\n${messages.map((m) => `${m.from}: ${m.text}`).join("\n")}${aboutViewers(messages.map((m) => m.from))}\n` +
+    `If someone shared something small worth remembering (where they're from, what they love, what they're doing), ` +
+    `save it with [[remember: Name | short fact]] on its own line at the end.`
+  : "";
 import { findStations, splitStationTag, describeStation, nowPlayingTitle, pickOne } from "./radio.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -48,6 +60,7 @@ const PODCAST_SPEED = Number(process.env.PODCAST_SPEED || 0.9);
 const PAUSE_MS = [550, 1100]; // random pause between lines, in milliseconds
 let guest = null; // who's in the studio with Lyra right now
 const podcast = createPodcast();
+const recorder = createRecorder(PODCAST_NAME); // each podcast topic -> recordings/*.mp3 + transcript
 let mode = "radio";
 let podcastRunning = false;
 let topicDeck = [];
@@ -76,15 +89,83 @@ function stationEvent() {
 let nowPlaying = "";      // the current song, if the station shares it
 let recentSongs = [];     // the last few songs before it
 let nowPlayingAt = 0;     // when we last checked
+let stationSince = 0;     // when we tuned to the current station
 
 let songVisual = { type: "songmedia", title: "" }; // video / artwork for the current song
 
-function setNowPlaying(title) {
-  if (title === nowPlaying) return false;
+// ---------- Music source: live radio stations, or the artist's own songs from his YouTube channel ----------
+// "channel" is the YouTube-safe mode: only his own releases, so a stream can't get copyright strikes.
+const MUSIC_CHANNEL = process.env.MUSIC_CHANNEL || "";
+const DJ_BREAK_MIN = 3; // between his songs, Lyra does a DJ break if she's been quiet this long (or chat is waiting)
+let source = process.env.RADIO_SOURCE === "channel" && MUSIC_CHANNEL ? "channel" : "stations";
+let channel = null; // { name, songs }
+let trackDeck = [];
+let track = null;
+
+async function loadChannel() {
+  if (!channel) {
+    channel = await loadChannelSongs(MUSIC_CHANNEL);
+    console.log(`[music] ${channel.name}: ${channel.songs.length} songs`);
+  }
+  return channel;
+}
+function nextChannelTrack() {
+  if (!trackDeck.length) trackDeck = [...channel.songs].sort(() => Math.random() - 0.5).filter((s) => s.videoId !== track?.videoId);
+  return trackDeck.pop();
+}
+function playTrack(t) {
+  track = t;
+  setNowPlaying(t.title, { videoId: t.videoId, own: true });
+}
+const sourceEvent = () => ({ type: "source", source, channel: channel?.name || "", available: Boolean(MUSIC_CHANNEL) });
+
+async function setSource(s, by = "button") {
+  if (s === source || !["stations", "channel"].includes(s)) return;
+  if (s === "channel") {
+    if (!MUSIC_CHANNEL) return;
+    try { await loadChannel(); } catch (err) { console.error(`[music] ${err.message}`); return; }
+  }
+  source = s;
+  console.log(`[source] ${source} (chosen by ${by})`);
+  broadcast(sourceEvent());
+  if (source === "channel") return playTrack(nextChannelTrack());
+  track = null;
+  setNowPlaying(""); // stop his song's video
+  if (station) {
+    broadcast(stationEvent());
+    setNowPlaying(await nowPlayingTitle(station.url_resolved));
+  } else await tuneTo(START_STATION);
+}
+
+// The page says his song finished: maybe a short DJ break, then the next one.
+async function channelTrackEnded(videoId, failed = false) {
+  if (source !== "channel" || !track || videoId !== track.videoId) return;
+  const finished = track;
+  const next = nextChannelTrack();
+  track = null; // so a second "ended" for the same song is ignored
+  const quietFor = (Date.now() - lastTalk) / 60_000;
+  if (!failed && live && mode === "radio" && !busy && (inbox.length || quietFor >= DJ_BREAK_MIN)) {
+    busy = true;
+    const messages = inbox.splice(0, MAX_MESSAGES_PER_TALK);
+    const msgs = viewerBlock(messages);
+    await talk(`DJ break between songs. "${finished.title}" by ${channel.name} just finished. Up next is "${next.title}". ` +
+      `Keep it short and end by introducing the next song.${msgs}`);
+  }
+  playTrack(next);
+}
+
+// media: pass { videoId, own: true } for the artist's own songs (no lookup needed; the video IS the music)
+function setNowPlaying(title, media) {
+  if (title === nowPlaying && !media) return false;
   if (nowPlaying) recentSongs = [nowPlaying, ...recentSongs].slice(0, 4);
   nowPlaying = title;
   console.log(`♪ ${title || "(no title)"}`);
   broadcast({ type: "nowplaying", title });
+  if (media) {
+    songVisual = { type: "songmedia", title, ...media };
+    broadcast(songVisual);
+    return Boolean(title);
+  }
   // find a music video / album art for it in the background, then send it to the page
   songMedia(title).then((m) => {
     if (title !== nowPlaying) return; // the song already changed again
@@ -107,6 +188,7 @@ async function tuneTo(words) {
   const withTitle = candidates.findIndex((_, i) => titles[i]);
   const pick = withTitle >= 0 ? withTitle : 0;
   station = candidates[pick];
+  stationSince = Date.now();
   recentSongs = [];
   nowPlaying = "";
   console.log(`📻 ${describeStation(station)}`);
@@ -117,12 +199,25 @@ async function tuneTo(words) {
 }
 
 // One talk: ONE model request + ONE TTS request, then wait for the page to finish playing it.
-async function talk(cueText) {
+// How long we've been on the current station. Under 20 minutes she only switches if a viewer asked.
+const stationMinutes = () => (Date.now() - stationSince) / 60_000;
+const STAY_MIN = 20;
+
+// opts.canSwitch: may she change station this time? (a viewer wrote in, or she's been on it a while)
+async function talk(cueText, { canSwitch = false } = {}) {
   busy = true;
   broadcast({ type: "thinking" });
   try {
     const reply = await lyra.cue(cueText);
-    const { spoken, station: wanted } = splitStationTag(reply); // strips every [[...]] tag from what she says
+    rememberFrom(reply); // [[remember: Name | fact]]
+    let { spoken, station: wanted } = splitStationTag(reply); // strips every [[...]] tag from what she says
+    if (wanted && !canSwitch) { // too soon and nobody asked: keep the station, and drop her "I'm switching" line
+      console.log(`[radio] kept the station (she wanted "${wanted}", but nobody asked and it's only been ${Math.round(stationMinutes())} min)`);
+      wanted = null;
+      spoken = spoken.split(/(?<=[.!?])\s+/)
+        .filter((s) => !/\b(switch|switching|put(ting)? on|chang(e|ing)|tun(e|ing)|flip(ping)?)\b/i.test(s))
+        .join(" ").trim() || spoken;
+    }
     if (/\[\[\s*quiet\s*\]\]/i.test(reply) && !spoken) { // her choice: let the music play
       console.log("[Lyra chose to stay quiet]");
       broadcast({ type: "idle" });
@@ -145,7 +240,8 @@ async function talk(cueText) {
     setTimeout(() => fs.rmSync(file, { force: true }), 60_000);
 
     if (invited) setMode("podcast", { by: "Lyra", guest: invited }); // starts once this talk has finished
-    else if (wanted) await tuneTo(wanted);
+    else if (source === "channel" && /\[\[\s*next song\s*\]\]/i.test(reply)) playTrack(nextChannelTrack());
+    else if (wanted && source === "stations") await tuneTo(wanted); // no outside stations in YouTube-safe mode
   } catch (err) {
     console.error(`[talk skipped] ${err.status ? `${err.status} ` : ""}${err.message}`);
     broadcast({ type: "idle" });
@@ -157,6 +253,13 @@ async function talk(cueText) {
 }
 
 async function stationInfo() {
+  if (source === "channel") {
+    const before = recentSongs.length ? ` Earlier: ${recentSongs.map((s) => `"${s}"`).join(", ")}.` : "";
+    return `You're playing ${channel?.name || "the artist"}'s own songs from his YouTube music channel. ` +
+      `Now playing: "${track?.title || nowPlaying}" by ${channel?.name}.${before} In this mode you only play his songs ` +
+      `(it keeps the stream safe), so you can't switch to radio stations; if someone wants something else, ` +
+      `you can skip to another of his songs by ending your reply with [[next song]].`;
+  }
   if (!station) return "No station is playing.";
   if (Date.now() - nowPlayingAt > 15_000) { // refresh if our info is old
     setNowPlaying(await nowPlayingTitle(station.url_resolved));
@@ -166,21 +269,23 @@ async function stationInfo() {
     ? ` The song playing right now is "${nowPlaying}" (that's what the station broadcasts, usually "Artist - Title").`
     : " This station doesn't say which song is playing, so don't name one.";
   const before = recentSongs.length ? ` Earlier: ${recentSongs.map((s) => `"${s}"`).join(", ")}.` : "";
-  return `You're tuned to ${describeStation(station)}.${song}${before}`;
+  const mins = Math.round((Date.now() - stationSince) / 60_000);
+  const stay = mins < 20 ? " Stay on this station unless a viewer asks for something different." : "";
+  return `You're tuned to ${describeStation(station)}, and have been for ${mins} minute${mins === 1 ? "" : "s"}.${song}${before}${stay}`;
 }
 
 // Follow the music: check the song every 20 s. When a new one starts and Lyra's been quiet a while,
 // she gets a turn: say something about it, or choose to stay quiet.
 const SONG_TALK_GAP_MIN = 4;
 setInterval(async () => {
-  if (!live || mode !== "radio" || !station) return;
+  if (!live || mode !== "radio" || !station || source !== "stations") return;
   const changed = setNowPlaying(await nowPlayingTitle(station.url_resolved));
   nowPlayingAt = Date.now();
   if (!changed || busy || (Date.now() - lastTalk) / 60_000 < SONG_TALK_GAP_MIN) return;
   busy = true;
   await talk(`A new song just started. ${await stationInfo()} ` +
     `You can say something short about it (the artist, the sound, what it makes you think of, a real fact you know), ` +
-    `or if you'd rather let the music speak, reply with only [[quiet]].`);
+    `or if you'd rather let the music speak, reply with only [[quiet]].`, { canSwitch: stationMinutes() >= STAY_MIN });
 }, 20_000);
 
 // ---------- Podcast ----------
@@ -222,8 +327,7 @@ function podcastCue({ topic, seg, first, joining, who }) {
 
 // A viewer wrote in mid-conversation: Lyra cuts in, answers, and they pick the thread back up.
 function interruptCue({ who, topic, messages, lastSaid }) {
-  const msgs = messages.map((m) => `${m.from}: ${m.text}`).join("\n");
-  return `Viewer messages just came in while they were talking about "${topic}":\n${msgs}\n` +
+  return `${viewerBlock(messages, `Viewer messages just came in while they were talking about "${topic}"`).trim()}\n` +
     `The last thing said out loud was ${lastSaid.who.toUpperCase()}: "${lastSaid.text}". Anything written after that was never said. ` +
     `Lyra cuts in naturally and politely (like "sorry, hold that thought"), reads the message out by name and answers it, and ${who} can react. ` +
     `Then they pick the conversation back up right where it stopped and carry on. 5 to 7 lines. Only LYRA and ${who.toUpperCase()} speak.`;
@@ -239,7 +343,8 @@ function setMode(m, { by = "button", guest: startGuest } = {}) {
   if (mode === "podcast") runPodcast(startGuest);
   else {
     lastTalk = Date.now(); // let the music play before she talks again
-    if (!station) tuneTo(START_STATION);
+    if (source === "channel" && channel) playTrack(track || nextChannelTrack());
+    else if (!station) tuneTo(START_STATION);
   }
 }
 
@@ -277,8 +382,10 @@ async function runPodcast(startGuest) {
       const res = await pending;
       pending = null;
       const { lines, nextGuest, who, wrap } = res;
+      for (const r of res.remember || []) saveFact(r.name, r.fact);
       if (!lines.length) throw new Error("the model returned no dialogue lines");
       if (who !== guest) { guest = who; broadcast({ type: "guest", ...guestCard(guest) }); }
+      if (res.topic && res.topic !== recorder.topic()) recorder.start(res.topic, who); // a new topic = a new episode file
       if (wrap) { // Lyra chose what comes next: a guest, or the radio
         if (nextGuest === "Radio") radioNext = true;
         else {
@@ -298,8 +405,10 @@ async function runPodcast(startGuest) {
         if (i + 1 < lines.length) nextAudio = voiceLine(lines[i + 1]);
         if (!pending && !radioNext && !inbox.length && i >= lines.length - 2) pending = nextSegment();
         if (file) {
-          if (i > 0) await sleep(PAUSE_MS[0] + Math.random() * (PAUSE_MS[1] - PAUSE_MS[0])); // a breath between turns
+          const pause = i > 0 ? PAUSE_MS[0] + Math.random() * (PAUSE_MS[1] - PAUSE_MS[0]) : 0;
+          if (pause) await sleep(pause); // a breath between turns
           await playLine(lines[i], file);
+          recorder.add(lines[i], file, pause);
         }
         said = i + 1;
         if (!live || mode !== "podcast") break;
@@ -330,6 +439,7 @@ async function runPodcast(startGuest) {
     console.error(`[podcast stopped] ${err.status ? `${err.status} ` : ""}${err.message}`);
     broadcast({ type: "idle" });
   } finally {
+    recorder.finish(); // save whatever topic was in progress
     podcastRunning = false;
     lastTalk = Date.now();
     busy = false;
@@ -338,13 +448,63 @@ async function runPodcast(startGuest) {
   }
 }
 
+// ---------- Patch cameo ----------
+// Every 15-30 minutes Patch wanders past camera six. The page shows the feed, and Lyra hears about it.
+let patchSeenAt = 0;
+function schedulePatch() {
+  setTimeout(() => {
+    if (live) {
+      broadcast({ type: "patch" });
+      patchSeenAt = Date.now();
+      console.log("[patch] on camera six");
+    }
+    schedulePatch();
+  }, (15 + Math.random() * 15) * 60_000);
+}
+schedulePatch();
+// Added to Lyra's next radio cue (within two minutes of him showing up).
+function patchNote() {
+  if (!patchSeenAt || Date.now() - patchSeenAt > 2 * 60_000) return "";
+  patchSeenAt = 0;
+  return " (Patch just wandered across security camera six, and viewers saw it on screen. You can mention it if you like.)";
+}
+
+// ---------- Show clock ----------
+// Top of every hour (radio only): a station ident, the time in Death Valley, the news, and the new episode if there is one.
+let showStartedAt = 0;
+let lastTopOfHour = -1;
+setInterval(async () => {
+  if (!live || mode !== "radio" || busy) return;
+  const now = new Date();
+  if (now.getMinutes() > 5 || now.getHours() === lastTopOfHour) return; // in the first five minutes of the hour
+  if (Date.now() - showStartedAt < 10 * 60_000) return; // not right after the show opened
+  lastTopOfHour = now.getHours();
+  busy = true;
+  const time = now.toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" });
+  const news = process.env.NEWS === "0" ? "" : await newsBlock().catch(() => "");
+  const promo = episodeNews();
+  const asks = [
+    `Do a short station ident ("you're listening to Lyra Radio") and say the time`,
+    news && "then a short news break from the outside world: pick three of these stories and say each in your own voice in one or two sentences",
+    promo && "and briefly mention the new episode",
+  ].filter(Boolean).join(", ");
+  console.log("[clock] top of the hour");
+  await talk(`It's the top of the hour: ${time} in Death Valley. ${await stationInfo()} ${asks}. Then back to the music.` +
+    `${news ? `\n${news}` : ""}${promo ? `\n${promo}` : ""}`);
+}, 30_000);
+
 async function startShow() {
   if (live) return;
   live = true;
+  showStartedAt = Date.now();
   broadcast({ type: "live" });
   if (mode === "podcast") return runPodcast();
   busy = true; // keep the talk timer quiet while the show opens
-  await tuneTo(START_STATION);
+  if (source === "channel") {
+    try { await loadChannel(); broadcast(sourceEvent()); playTrack(nextChannelTrack()); }
+    catch (err) { console.error(`[music] ${err.message}; using stations`); source = "stations"; broadcast(sourceEvent()); }
+  }
+  if (source === "stations") await tuneTo(START_STATION);
   await talk(
     `The show "${SHOW_NAME}" is starting now. People can see your hologram on screen and type to you. ` +
       `Welcome everyone and introduce the station in three or four sentences at most. ${await stationInfo()}`,
@@ -359,10 +519,10 @@ setInterval(async () => {
   if (!hasMail && since < TALK_EVERY_MIN * 60) return;
   busy = true; // claim the slot before the slow parts below
   const messages = inbox.splice(0, MAX_MESSAGES_PER_TALK);
-  const msgs = messages.length
-    ? ` Viewer messages:\n${messages.map((m) => `${m.from}: ${m.text}`).join("\n")}`
-    : " Nobody has written in. Say something short over the music.";
-  await talk(`Talk break. ${await stationInfo()}${msgs}`);
+  let msgs = viewerBlock(messages) || " Nobody has written in. Say something short over the music.";
+  // someone asked about the news: give her real headlines for this answer
+  if (messages.some((m) => /\bnews\b|headlines|what'?s happening/i.test(m.text))) msgs += `\n${await newsBlock().catch(() => "")}`;
+  await talk(`Talk break. ${await stationInfo()}${patchNote()}${msgs}`, { canSwitch: messages.length > 0 || stationMinutes() >= STAY_MIN });
 }, 2000);
 
 // ---------- HTTP ----------
@@ -399,6 +559,37 @@ function readBody(req) {
 
 const clean = (s, max) => String(s ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, max);
 
+// Every chat message (the page's own chat, or YouTube live chat) lands here.
+function addChat({ from, text, source = "page" }) {
+  const msg = { from: clean(from, 30) || "viewer", text: clean(text, 300), source };
+  if (!msg.text) return false;
+  inbox.push(msg);
+  noteVisit(msg.from);
+  if (inbox.length > 30) inbox.shift(); // a flood of messages: keep the newest
+  broadcast({ type: "chat", ...msg });
+  return true;
+}
+
+// ---------- YouTube live chat ----------
+let ytChat = null;
+let ytStatus = { type: "youtube", connected: false };
+async function connectYouTube(video) {
+  ytChat?.stop();
+  ytChat = null;
+  if (!video) return;
+  const status = (s) => {
+    ytStatus = { type: "youtube", ...s };
+    console.log(`[youtube] ${s.connected ? `reading chat: ${s.title}` : s.error ? `stopped: ${s.error}` : "disconnected"}`);
+    broadcast(ytStatus);
+  };
+  try {
+    ytChat = await connectLiveChat(video, (m) => addChat({ ...m, source: "youtube" }), status);
+  } catch (err) {
+    status({ connected: false, error: err.message });
+  }
+}
+if (process.env.YOUTUBE_LIVE_ID) connectYouTube(process.env.YOUTUBE_LIVE_ID);
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const send = (code, body = "", type = "text/plain") => {
@@ -409,10 +600,13 @@ const server = http.createServer(async (req, res) => {
   // Live updates to the page
   if (url.pathname === "/api/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
-    res.write(`data: ${JSON.stringify({ type: "hello", live, mode, show: SHOW_NAME, podcast: PODCAST_NAME, model: MODEL })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "hello", live, mode, show: SHOW_NAME, podcast: PODCAST_NAME, model: MODEL,
+      episode: process.env.LATEST_EPISODE || "", episodeTitle: process.env.LATEST_EPISODE_TITLE || "" })}\n\n`);
     if (station) res.write(`data: ${JSON.stringify(stationEvent())}\n\n`);
     if (nowPlaying) res.write(`data: ${JSON.stringify({ type: "nowplaying", title: nowPlaying })}\n\n`);
     if (songVisual.title) res.write(`data: ${JSON.stringify(songVisual)}\n\n`);
+    res.write(`data: ${JSON.stringify(ytStatus)}\n\n`);
+    res.write(`data: ${JSON.stringify(sourceEvent())}\n\n`);
     if (guest) res.write(`data: ${JSON.stringify({ type: "guest", ...guestCard(guest) })}\n\n`);
     clients.add(res);
     req.on("close", () => clients.delete(res));
@@ -433,10 +627,33 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/chat") {
     const { from, text } = await readBody(req);
-    const msg = { from: clean(from, 30) || "viewer", text: clean(text, 300) };
-    if (!msg.text) return send(400, "empty message");
-    inbox.push(msg);
-    broadcast({ type: "chat", ...msg });
+    return addChat({ from, text }) ? send(204) : send(400, "empty message");
+  }
+
+  // Show Patch on camera six now (the P key on the page).
+  if (req.method === "POST" && url.pathname === "/api/patch") {
+    broadcast({ type: "patch" });
+    patchSeenAt = Date.now();
+    return send(204);
+  }
+
+  // Music source: "stations" (live radio) or "channel" (the artist's own songs; YouTube-safe).
+  if (req.method === "POST" && url.pathname === "/api/source") {
+    const { source: wanted } = await readBody(req);
+    await setSource(wanted, "button");
+    return send(204);
+  }
+  // The page finished (or couldn't play) one of his songs.
+  if (req.method === "POST" && (url.pathname === "/api/track-ended" || url.pathname === "/api/track-error")) {
+    const { videoId } = await readBody(req);
+    channelTrackEnded(String(videoId || ""), url.pathname.endsWith("error"));
+    return send(204);
+  }
+
+  // Connect to a YouTube live stream's chat (a video id or link; empty = disconnect).
+  if (req.method === "POST" && url.pathname === "/api/youtube") {
+    const { video } = await readBody(req);
+    await connectYouTube(clean(video, 200));
     return send(204);
   }
 

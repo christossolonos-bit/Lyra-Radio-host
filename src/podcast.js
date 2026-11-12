@@ -59,8 +59,14 @@ const title = (s) => s[0].toUpperCase() + s.slice(1).toLowerCase();
 // Only Lyra and this segment's guest may speak; any other name is dropped.
 export function parseScript(raw, guest, castNames) {
   const lines = [];
+  const remember = [];
   let nextGuest = null;
   for (const line of raw.split(/\r?\n/)) {
+    const mem = line.match(/^\s*\**\s*REMEMBER\s*\**\s*:\s*([^|]+?)\s*\|\s*(.+)$/i);
+    if (mem) {
+      remember.push({ name: mem[1], fact: mem[2] });
+      continue;
+    }
     const next = line.match(/^\s*\**\s*NEXT GUEST\s*\**\s*:\s*\**\s*([A-Za-z]+)/i);
     if (next) {
       // a guest's name, or RADIO when Lyra decides it's time for music
@@ -72,7 +78,7 @@ export function parseScript(raw, guest, castNames) {
     const text = m[2].replace(/\*|\[[^\]]*\]|\([^)]*\)/g, "").replace(/\s+/g, " ").trim();
     if (text) lines.push({ who: title(m[1]), text });
   }
-  return { lines: lines.slice(0, 10), nextGuest };
+  return { lines: lines.slice(0, 10), nextGuest, remember };
 }
 
 export function createPodcast() {

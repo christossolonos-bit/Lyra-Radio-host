@@ -27,9 +27,23 @@ function loadCanon(upTo) {
     .trim();
 }
 
+// The newest episode of the series, for promos (set in .env when one goes up).
+export function episodeNews() {
+  const n = process.env.LATEST_EPISODE;
+  if (!n) return "";
+  const title = process.env.LATEST_EPISODE_TITLE ? ` "${process.env.LATEST_EPISODE_TITLE}"` : "";
+  const link = process.env.LATEST_EPISODE_LINK ? " The link is in the description." : "";
+  const unseen = Number(n) > CANON_UP_TO
+    ? ` You don't know what happens in it yet, so tease it without describing any of it.`
+    : ` You can tease it, but never spoil its ending or its biggest moments.`;
+  return `Episode ${n}${title} of Lyra AI is out now.${link}${unseen}`;
+}
+
 export function buildSystemPrompt() {
   const persona = fs.readFileSync(path.join(LYRA_DIR, "persona.md"), "utf8").trim();
-  return `${persona}\n\n# What has happened so far (released episodes only)\n\n${loadCanon(CANON_UP_TO)}`;
+  const news = episodeNews();
+  const whatsNew = news ? `\n\n# What's new\n\n${news} Mention it now and then, especially at the top of the hour or when someone asks about the show. Don't mention it in every reply.` : "";
+  return `${persona}\n\n# What has happened so far (released episodes only)\n\n${loadCanon(CANON_UP_TO)}${whatsNew}`;
 }
 
 export function createLyra() {

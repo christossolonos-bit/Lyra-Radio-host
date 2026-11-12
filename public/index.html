@@ -114,7 +114,7 @@
     width: min(48vh, 34vw); aspect-ratio: 1; object-fit: cover; border-radius: 14px; box-shadow: 0 30px 90px rgba(0, 0, 0, .65); }
   .songbg-video { position: absolute; inset: 0; overflow: hidden; }
   .songbg-video iframe { position: absolute; top: 50%; left: 50%; width: 177.78vh; height: 100vh; min-width: 100vw; min-height: 56.25vw;
-    transform: translate(-50%, -50%); border: 0; filter: brightness(.62); }
+    transform: translate(-50%, -50%) scale(1.22); border: 0; filter: brightness(.62); } /* zoomed so YouTube's title bar and icons sit off screen */
   body.has-video .songbg-art { display: none; }
   .songbg-shade { position: absolute; inset: 0;
     background: linear-gradient(to top, rgba(0, 0, 0, .8), transparent 45%), linear-gradient(to bottom, rgba(0, 0, 0, .6), transparent 22%); }
@@ -125,6 +125,20 @@
   body.streaming.talking .holo { transform: translate(calc(-48vw + 160px + 19vh), 5vh) scale(.62); }
   body.streaming .bloom, body.streaming .particles { opacity: 0; }
 
+  /* ---------- Patch on camera six ---------- */
+  .cam { position: fixed; top: 20px; right: 340px; width: 250px; aspect-ratio: 310 / 200; border-radius: 6px; overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, .25); box-shadow: 0 10px 40px rgba(0, 0, 0, .6); z-index: 5;
+    transform: translateY(-140%); transition: transform .7s cubic-bezier(.2, .8, .2, 1); pointer-events: none; }
+  .cam.on { transform: translateY(0); }
+  .cam img { width: 100%; height: 100%; object-fit: cover; filter: saturate(.35) contrast(1.15) brightness(.95); }
+  .cam::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .18) 0 1px, transparent 1px 3px); }
+  .cam-label, .cam-time { position: absolute; z-index: 1; font: 600 11px ui-monospace, Consolas, monospace; color: #fff;
+    text-shadow: 0 1px 3px #000; letter-spacing: .08em; }
+  .cam-label { top: 7px; left: 9px; display: flex; align-items: center; gap: 6px; }
+  .cam-label i { width: 8px; height: 8px; border-radius: 50%; background: #ff3b30; animation: blink 1s steps(2) infinite; }
+  .cam-time { bottom: 7px; right: 9px; }
+  @media (max-width: 800px) { .cam { right: 12px; width: 180px; } }
+
   .np { font-size: 13px; color: var(--ink); max-width: 46vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .np::before { content: "♪ "; color: var(--cyan); }
   .np[hidden], body.podcast .np { display: none; }
@@ -132,6 +146,11 @@
   .modes button { font: inherit; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; padding: 5px 12px;
     border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
   .modes button.on { background: var(--cyan); border-color: var(--cyan); color: #001418; }
+  .sources button { font-size: 10px; padding: 3px 10px; }
+  .ep { display: inline-block; width: fit-content; font-size: 11px; letter-spacing: .12em; color: #001418; background: #ffd27a;
+    border-radius: 4px; padding: 2px 8px; font-weight: 700; text-transform: uppercase; }
+  .ep[hidden] { display: none; }
+  .sources[hidden], body.podcast .sources { display: none; }
 
   /* ---------- Podcast: Nova on the left looking across, Lyra on the right ---------- */
   .guest { display: none; position: absolute; left: 7vw; top: 50%; width: 36vh; height: 46vh; border-radius: 18px; overflow: hidden;
@@ -165,6 +184,14 @@
   .chat h2 { margin: 0; padding: 14px 16px 10px; font-size: 12px; letter-spacing: .2em; color: var(--muted); font-weight: 600; }
   .log { flex: 1; overflow-y: auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
   .log .m b { color: var(--cyan); font-weight: 600; margin-right: 6px; }
+  .log .m .yt { font-size: 9px; font-weight: 700; color: #fff; background: #e62117; border-radius: 3px; padding: 1px 4px; margin-right: 6px; vertical-align: 1px; }
+  .chat h2 { display: flex; justify-content: space-between; align-items: center; }
+  .yt-state { font-size: 10px; letter-spacing: .08em; color: var(--muted); font-weight: 400; max-width: 180px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: none; }
+  .yt-state.on { color: #ff6b6b; }
+  .yt-form { display: flex; flex-direction: row; gap: 6px; padding: 0 12px 10px; border: 0; }
+  .yt-form input { font-size: 12px; padding: 6px 8px; }
+  .yt-form button { font: inherit; font-size: 11px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; padding: 0 10px; }
   .log .m.lyra { color: #cfeff6; } .log .m.lyra b { color: #fff; }
   .log .m.sys { color: var(--muted); font-size: 12px; font-style: italic; }
   form { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
@@ -196,7 +223,7 @@
   <!-- Behind everything while a song plays: its music video (muted) or its album artwork -->
   <div class="songbg" id="songbg">
     <img class="songbg-blur" id="artBlur" alt="">
-    <div class="songbg-video" id="video"></div>
+    <div class="songbg-video"><div id="video"></div></div>
     <img class="songbg-art" id="art" alt="">
     <div class="songbg-shade"></div>
   </div>
@@ -225,12 +252,25 @@
     <div class="guest" id="guest"><img id="guestImg" src="cast/nova.jpg" alt="Nova"><span id="guestName">NOVA</span></div>
   </div>
 
+  <!-- Patch cameo: a security-camera feed that slides in now and then ("why is there a pit bull on camera six?") -->
+  <div class="cam" id="cam">
+    <img src="cast/patch_cam.jpg" alt="Patch on camera six">
+    <span class="cam-label"><i></i>CAM 06</span>
+    <span class="cam-time" id="camTime"></span>
+  </div>
+
   <div class="ui">
     <div class="top">
       <div><span class="brand" id="brand">LYRA RADIO</span><span class="live" id="liveTag" hidden>LIVE</span></div>
+      <div class="ep" id="ep" hidden></div>
       <div class="modes" id="modes">
         <button data-mode="radio" class="on">Radio</button>
         <button data-mode="podcast">Podcast</button>
+      </div>
+      <!-- music source: live radio stations, or the artist's own songs (YouTube-safe) -->
+      <div class="modes sources" id="sources" hidden>
+        <button data-source="stations" class="on">Stations</button>
+        <button data-source="channel">My music</button>
       </div>
       <div class="station" id="station">Tuning in…</div>
       <div class="np" id="np" hidden></div>
@@ -241,7 +281,11 @@
     </div>
     <div class="subs" id="subs"></div>
     <aside class="chat">
-      <h2>CHAT</h2>
+      <h2>CHAT <span class="yt-state" id="ytState">YouTube off</span></h2>
+      <form class="yt-form" id="ytForm">
+        <input id="ytInput" placeholder="YouTube live link or video id" autocomplete="off">
+        <button type="submit">Connect</button>
+      </form>
       <div class="log" id="log"></div>
       <form id="chatForm">
         <div class="row">
@@ -250,7 +294,7 @@
         </div>
       </form>
     </aside>
-    <div class="keys"><kbd>H</kbd>hide UI &nbsp; <kbd>B</kbd>full body &nbsp; <kbd>V</kbd>lip sync / video &nbsp; <kbd>S</kbd>streamer &nbsp; <kbd>M</kbd>mirror &nbsp; <kbd>F</kbd>fullscreen</div>
+    <div class="keys"><kbd>H</kbd>hide UI &nbsp; <kbd>B</kbd>full body &nbsp; <kbd>V</kbd>lip sync / video &nbsp; <kbd>S</kbd>streamer &nbsp; <kbd>P</kbd>Patch &nbsp; <kbd>M</kbd>mirror &nbsp; <kbd>F</kbd>fullscreen</div>
   </div>
 
   <div class="start" id="start">
@@ -261,6 +305,7 @@
     </div>
   </div>
 
+<script src="https://www.youtube.com/iframe_api" async></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
@@ -281,12 +326,20 @@ const station = new Audio();
 let musicVol = Number(localStorageGet("lyra-music-vol") ?? 0.85);
 let voiceVol = Number(localStorageGet("lyra-voice-vol") ?? 1);
 let ducked = false, voiceGain = null;
-station.volume = musicVol;
+// The music is either the radio station (<audio>) or one of his songs (YouTube player). Both follow musicLevel.
+let musicLevel = musicVol;
+let ytPlayer = null, ownMusic = false; // the YouTube player (set up further down)
+function setMusicLevel(v) {
+  musicLevel = Math.max(0, Math.min(1, v));
+  station.volume = musicLevel;
+  if (ownMusic && ytPlayer?.setVolume) ytPlayer.setVolume(Math.round(musicLevel * 100));
+}
+setMusicLevel(musicVol);
 $("musicVol").value = musicVol;
 $("voiceVol").value = voiceVol;
 $("musicVol").addEventListener("input", (e) => {
   musicVol = Number(e.target.value);
-  station.volume = ducked ? musicVol * 0.15 : musicVol;
+  setMusicLevel(ducked ? musicVol * 0.15 : musicVol);
   localStorageSet("lyra-music-vol", musicVol);
 });
 $("voiceVol").addEventListener("input", (e) => {
@@ -374,9 +427,9 @@ function duck(on) {
   ducked = on;
   const target = on ? musicVol * 0.15 : musicVol;
   const step = () => {
-    const d = target - station.volume;
-    if (Math.abs(d) < 0.02) return (station.volume = target);
-    station.volume = Math.max(0, Math.min(1, station.volume + d * 0.2));
+    const d = target - musicLevel;
+    if (Math.abs(d) < 0.02) return setMusicLevel(target);
+    setMusicLevel(musicLevel + d * 0.2);
     setTimeout(step, 30);
   };
   step();
@@ -439,6 +492,10 @@ events.onmessage = (e) => {
   const ev = JSON.parse(e.data);
   if (ev.type === "hello") {
     names = { radio: ev.show, podcast: ev.podcast };
+    if (ev.episode) {
+      $("ep").textContent = `New · Episode ${ev.episode}${ev.episodeTitle ? `: ${ev.episodeTitle}` : ""}`;
+      $("ep").hidden = false;
+    }
     applyMode(ev.mode);
     if (ev.live) $("goLive").textContent = "JOIN";
   }
@@ -450,17 +507,26 @@ events.onmessage = (e) => {
     if (!ev.title) showSongMedia({}); // unknown song: Lyra comes back to the middle
   }
   if (ev.type === "songmedia") showSongMedia(ev);
+  if (ev.type === "source") applySource(ev);
+  if (ev.type === "patch") showPatch();
   if (ev.type === "live") $("liveTag").hidden = false;
   if (ev.type === "station") {
     $("station").innerHTML = `📻 <b>${escapeHtml(ev.name)}</b> · ${escapeHtml(ev.country || "")}` +
       (ev.tags.length ? ` · ${escapeHtml(ev.tags.join(", "))}` : "");
     station.dataset.pending = ev.url;
-    if (ctx && mode === "radio") { station.src = ev.url; station.play().catch(() => {}); }
+    if (ctx && mode === "radio" && source === "stations") { station.src = ev.url; station.play().catch(() => {}); }
   }
   if (ev.type === "thinking") $("thinking").classList.add("on");
   if (ev.type === "idle") $("thinking").classList.remove("on");
   if (ev.type === "say" && ctx) speak(ev.text, ev.audio, ev.who);
-  if (ev.type === "chat") addLog(ev.from, ev.text);
+  if (ev.type === "chat") addLog(ev.from, ev.text, ev.source === "youtube" ? "from-yt" : "");
+  if (ev.type === "youtube") {
+    const s = $("ytState");
+    s.textContent = ev.connected ? `● YouTube: ${ev.title}` : ev.error ? `YouTube: ${ev.error}` : "YouTube off";
+    s.title = s.textContent;
+    s.classList.toggle("on", Boolean(ev.connected));
+    $("ytForm").querySelector("button").textContent = ev.connected ? "Disconnect" : "Connect";
+  }
 };
 events.onerror = () => addLog("", "Lost connection to the show server…", "sys");
 
@@ -478,23 +544,87 @@ function showGuest({ name, image, side, color }) {
 // ---------- Streamer mode: song video / artwork behind, Lyra in the corner ----------
 let streamOn = localStorageGet("lyra-stream") !== "off"; // S key toggles
 let hasSongMedia = false;
-function showSongMedia({ videoId, art }) {
-  for (const id of ["art", "artBlur"]) art ? $(id).setAttribute("src", art) : $(id).removeAttribute("src");
-  const box = $("video");
-  if (videoId && box.dataset.id !== videoId) {
-    const v = encodeURIComponent(videoId);
-    // muted: the radio station is the sound; the video is just the picture
-    box.innerHTML = `<iframe allow="autoplay; encrypted-media" tabindex="-1" src="https://www.youtube-nocookie.com/embed/${v}` +
-      `?autoplay=1&mute=1&controls=0&loop=1&playlist=${v}&rel=0&playsinline=1&modestbranding=1&start=15"></iframe>`;
-    box.dataset.id = videoId;
-  } else if (!videoId) {
-    box.innerHTML = "";
-    box.dataset.id = "";
+
+// One YouTube player for the background. A station's music video plays MUTED (the station is the sound);
+// one of his own songs plays WITH sound (the video is the music), and tells the server when it ends.
+let ytReady = false, currentVideo = "", pendingVideo = null;
+window.onYouTubeIframeAPIReady = () => {
+  ytReady = true;
+  if (pendingVideo) playVideo(...pendingVideo);
+};
+function playVideo(videoId, own) {
+  ownMusic = own;
+  currentVideo = videoId;
+  if (!ytReady || !ctx) { pendingVideo = [videoId, own]; return; } // wait for the API and for Go Live
+  pendingVideo = null;
+  const start = own ? 0 : 15;
+  if (!ytPlayer) {
+    ytPlayer = new YT.Player("video", {
+      videoId, host: "https://www.youtube-nocookie.com",
+      playerVars: { autoplay: 1, controls: 0, rel: 0, playsinline: 1, modestbranding: 1, disablekb: 1, start },
+      events: {
+        onReady: (e) => { applyVideoSound(); if (videoPlaying()) e.target.playVideo(); },
+        onStateChange: (e) => {
+          if (e.data !== YT.PlayerState.ENDED) return;
+          if (ownMusic) post("/api/track-ended", { videoId: currentVideo });
+          else ytPlayer.seekTo(15); // a station's video just loops quietly
+        },
+        onError: () => { if (ownMusic) post("/api/track-error", { videoId: currentVideo }); else stopVideo(); },
+      },
+    });
+  } else {
+    ytPlayer.loadVideoById({ videoId, startSeconds: start });
+    applyVideoSound();
+    if (!videoPlaying()) ytPlayer.pauseVideo();
   }
+}
+const videoPlaying = () => mode === "radio";
+function applyVideoSound() {
+  if (!ytPlayer?.setVolume) return;
+  if (ownMusic) { ytPlayer.unMute(); ytPlayer.setVolume(Math.round(musicLevel * 100)); }
+  else ytPlayer.mute();
+}
+function stopVideo() {
+  pendingVideo = null;
+  currentVideo = "";
+  ownMusic = false;
+  ytPlayer?.stopVideo?.();
+}
+
+function showSongMedia({ videoId, art, own }) {
+  for (const id of ["art", "artBlur"]) art ? $(id).setAttribute("src", art) : $(id).removeAttribute("src");
+  if (videoId && (videoId !== currentVideo || Boolean(own) !== ownMusic)) playVideo(videoId, Boolean(own));
+  else if (!videoId) stopVideo();
   document.body.classList.toggle("has-video", Boolean(videoId));
   hasSongMedia = Boolean(videoId || art);
   updateStreaming();
 }
+
+// ---------- Patch cameo ----------
+let camTimer = null;
+function showPatch(seconds = 12) {
+  const tick = () => ($("camTime").textContent = new Date().toLocaleTimeString("en-GB", { timeZone: "America/Los_Angeles" }));
+  tick();
+  clearInterval(camTimer);
+  camTimer = setInterval(tick, 1000);
+  $("cam").classList.add("on");
+  setTimeout(() => { $("cam").classList.remove("on"); clearInterval(camTimer); }, seconds * 1000);
+}
+
+// ---------- Music source ----------
+let source = "stations";
+function applySource({ source: s, channel, available }) {
+  source = s;
+  $("sources").hidden = !available;
+  document.querySelectorAll("#sources button").forEach((b) => b.classList.toggle("on", b.dataset.source === s));
+  if (channel) document.querySelector('#sources [data-source="channel"]').textContent = channel;
+  if (s === "channel") {
+    station.pause(); // his songs play through the YouTube player instead
+    $("station").innerHTML = `🎵 <b>${escapeHtml(channel || "My music")}</b> · own songs`;
+  }
+  else if (ctx && mode === "radio" && station.dataset.pending) { station.src = station.dataset.pending; station.play().catch(() => {}); }
+}
+document.querySelectorAll("#sources button").forEach((b) => (b.onclick = () => post("/api/source", { source: b.dataset.source })));
 function updateStreaming() {
   document.body.classList.toggle("streaming", streamOn && hasSongMedia && mode === "radio");
 }
@@ -508,8 +638,12 @@ function applyMode(m) {
   $("brand").textContent = names[m].toUpperCase();
   $("msg").placeholder = m === "podcast" ? "Say something to Lyra and Nova…" : "Say something to Lyra…";
   updateStreaming();
-  if (m === "podcast") station.pause(); // the podcast has no radio underneath
-  else if (ctx && station.dataset.pending) { station.src = station.dataset.pending; station.play().catch(() => {}); }
+  if (m === "podcast") { station.pause(); ytPlayer?.pauseVideo?.(); } // the podcast has no music underneath
+  else if (source === "channel") { if (currentVideo) ytPlayer?.playVideo?.(); }
+  else {
+    if (ctx && station.dataset.pending) { station.src = station.dataset.pending; station.play().catch(() => {}); }
+    if (currentVideo) ytPlayer?.playVideo?.();
+  }
 }
 document.querySelectorAll("#modes button").forEach((b) => (b.onclick = () => post("/api/mode", { mode: b.dataset.mode })));
 
@@ -519,7 +653,8 @@ $("goLive").onclick = async () => {
   await ctx.resume();
   $("start").classList.add("hidden");
   $("liveTag").hidden = false;
-  if (mode === "radio" && station.dataset.pending) { station.src = station.dataset.pending; station.play().catch(() => {}); }
+  if (mode === "radio" && source === "stations" && station.dataset.pending) { station.src = station.dataset.pending; station.play().catch(() => {}); }
+  if (pendingVideo) playVideo(...pendingVideo); // a song that arrived before Go Live
   post("/api/start");
 };
 
@@ -534,6 +669,11 @@ $("chatForm").onsubmit = (e) => {
   $("msg").value = "";
 };
 $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") $("chatForm").requestSubmit(); });
+$("ytForm").onsubmit = (e) => {
+  e.preventDefault();
+  const connected = $("ytState").classList.contains("on");
+  post("/api/youtube", { video: connected ? "" : $("ytInput").value.trim() });
+};
 
 document.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT") return;
@@ -543,6 +683,7 @@ document.addEventListener("keydown", (e) => {
   if (k === "f") document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
   if (k === "b") document.body.classList.toggle("full");
   if (k === "v") document.body.classList.toggle("sync");
+  if (k === "p") post("/api/patch");
   if (k === "s") { streamOn = !streamOn; localStorageSet("lyra-stream", streamOn ? "on" : "off"); updateStreaming(); }
 });
 
@@ -550,7 +691,8 @@ function addLog(who, text, cls = "", color = "") {
   const div = document.createElement("div");
   div.className = `m ${cls}`;
   const style = color ? ` style="color:${color}"` : "";
-  div.innerHTML = who ? `<b${style}>${escapeHtml(who)}</b>${escapeHtml(text)}` : escapeHtml(text);
+  const tag = cls.includes("from-yt") ? '<span class="yt">YT</span>' : "";
+  div.innerHTML = who ? `${tag}<b${style}>${escapeHtml(who)}</b>${escapeHtml(text)}` : escapeHtml(text);
   $("log").appendChild(div);
   while ($("log").children.length > 80) $("log").firstChild.remove();
   $("log").scrollTop = $("log").scrollHeight;

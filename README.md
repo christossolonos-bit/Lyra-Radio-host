@@ -39,7 +39,20 @@ You need **Node.js 22+** and **FFmpeg** (`ffplay` and `ffprobe` on your PATH).
 - **Volume sliders** for the music and Lyra's voice.
 - **Chat** on the right: type a name and a message.
 - **Streamer mode**: while a known song plays, its music video (muted, since the radio is the sound) or its album artwork fills the screen, and Lyra moves to the bottom-left corner like a facecam.
-- Keys: `H` hides everything but Lyra, `B` full body, `V` lip sync or video loop, `S` streamer mode on or off, `M` mirror (for Pepper's ghost glass), `F` fullscreen.
+- Keys: `H` hides everything but Lyra, `B` full body, `V` lip sync or video loop, `S` streamer mode on or off, `P` Patch on camera six, `M` mirror (for Pepper's ghost glass), `F` fullscreen.
+
+### Going live on YouTube
+
+1. Set `MUSIC_CHANNEL` to your music channel (an "Artist – Topic" channel works) and press **My music**. Lyra plays only your own songs, with each song's video behind her. Real stations and other people's videos would get the stream muted or struck.
+2. In OBS, add the page (`http://localhost:5177`) as a Browser Source at 1920×1080 and tick "Control audio via OBS".
+3. Start your YouTube stream, then paste its link into the **YouTube** box in the chat panel. Lyra reads the live chat (every 15 seconds) and answers out loud.
+
+### What else she does
+
+- **Remembers viewers**: regulars get welcomed back, and she saves small friendly facts with `[[remember: Name | fact]]` (in `data/viewers.json`, on your computer only, and never anything private).
+- **Records the podcast**: every topic becomes `recordings/<date>_<topic>_<guest>.mp3` plus a transcript, ready to upload as an episode.
+- **Top of the hour**: a station ident, the time in Death Valley, three real headlines (BBC News RSS, in her own words), and the newest episode if you've set `LATEST_EPISODE`.
+- **Patch**: every 15–30 minutes he wanders across security camera six (press `P` to show him now).
 
 ### Other ways to run her
 
