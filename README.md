@@ -39,13 +39,21 @@ You need **Node.js 22+** and **FFmpeg** (`ffplay` and `ffprobe` on your PATH).
 - **Volume sliders** for the music and Lyra's voice.
 - **Chat** on the right: type a name and a message.
 - **Streamer mode**: while a known song plays, its music video (muted, since the radio is the sound) or its album artwork fills the screen, and Lyra moves to the bottom-left corner like a facecam.
-- Keys: `H` hides everything but Lyra, `B` full body, `V` lip sync or video loop, `S` streamer mode on or off, `P` Patch on camera six, `M` mirror (for Pepper's ghost glass), `F` fullscreen.
+- Keys: `H` hides everything but Lyra, `B` full body, `V` lip sync or video loop, `S` streamer mode on or off, `P` Patch on camera six, `L` vertical (TikTok) layout, `M` mirror (for Pepper's ghost glass), `F` fullscreen.
 
 ### Going live on YouTube
 
 1. Set `MUSIC_CHANNEL` to your music channel (an "Artist – Topic" channel works) and press **My music**. Lyra plays only your own songs, with each song's video behind her. Real stations and other people's videos would get the stream muted or struck.
 2. In OBS, add the page (`http://localhost:5177`) as a Browser Source at 1920×1080 and tick "Control audio via OBS".
 3. Start your YouTube stream, then paste its link into the **YouTube** box in the chat panel. Lyra reads the live chat (every 15 seconds) and answers out loud.
+
+### Going live on TikTok
+
+1. Open **http://localhost:5177/?layout=vertical** (or press `L`). It's a 9:16 broadcast view: Lyra big in the middle, the song behind her, and subtitles above TikTok's own comments. Press `H` to show the chat and controls for yourself.
+2. Capture that window with **TikTok LIVE Studio** (or OBS if your account has a stream key) and go live. Use **My music**, because TikTok also mutes copyrighted songs.
+3. Type your **@username** in the **TikTok** box on the page. Lyra reads the chat and thanks gifts and new followers (batched, so a flood of roses doesn't take over).
+
+TikTok has no official live-chat API, so this uses the unofficial [tiktok-live-connector](https://github.com/zerodytrash/TikTok-Live-Connector) library, which can break when TikTok changes things. It needs a signing key from [Euler Stream](https://www.eulerstream.com) in `TIKTOK_SIGN_API_KEY`. YouTube and TikTok can both be connected at the same time.
 
 ### What else she does
 

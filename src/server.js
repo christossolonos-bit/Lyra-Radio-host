@@ -17,6 +17,7 @@ import { createPodcast, TOPICS, PODCAST_NAME } from "./podcast.js";
 import { voiceOf, availableGuests, guestCard } from "./cast.js";
 import { songMedia } from "./media.js";
 import { connectLiveChat } from "./youtube.js";
+import { connectTikTok } from "./tiktok.js";
 import { loadChannelSongs } from "./channel.js";
 import { noteVisit, aboutViewers, rememberFrom, saveFact } from "./memory.js";
 import { createRecorder } from "./recorder.js";
@@ -564,7 +565,7 @@ function addChat({ from, text, source = "page" }) {
   const msg = { from: clean(from, 30) || "viewer", text: clean(text, 300), source };
   if (!msg.text) return false;
   inbox.push(msg);
-  noteVisit(msg.from);
+  if (!source.endsWith("-event")) noteVisit(msg.from); // gift/follow summaries aren't a person
   if (inbox.length > 30) inbox.shift(); // a flood of messages: keep the newest
   broadcast({ type: "chat", ...msg });
   return true;
@@ -590,6 +591,61 @@ async function connectYouTube(video) {
 }
 if (process.env.YOUTUBE_LIVE_ID) connectYouTube(process.env.YOUTUBE_LIVE_ID);
 
+// ---------- TikTok LIVE chat, gifts and follows ----------
+let ttConn = null;
+let ttStatus = { type: "tiktok", connected: false };
+let ttEvents = { gifts: [], follows: [] }; // batched so a flood of roses doesn't make her talk nonstop
+
+// Watching: keep checking every minute until the account goes live, connect, and go back to waiting after the live ends.
+const TT_RETRY_MS = 60_000;
+let ttWatch = null;  // username being watched
+let ttRetry = null;
+let ttGen = 0;       // ignores status from connections we've already replaced
+
+async function connectTikTokLive(username) {
+  const gen = ++ttGen;
+  clearTimeout(ttRetry);
+  ttConn?.stop();
+  ttConn = null;
+  ttWatch = username || null;
+  if (!username) return broadcast((ttStatus = { type: "tiktok", connected: false }));
+  const status = (s) => {
+    if (gen !== ttGen) return;
+    const offline = /isn't live|ended|room/i.test(s.error || "") || (!s.connected && !s.error);
+    if (!s.connected && offline && ttWatch) { // not live (yet / any more): wait and try again
+      s = { connected: false, waiting: true, error: `waiting for @${ttWatch.replace(/^@/, "")} to go live` };
+      clearTimeout(ttRetry);
+      ttRetry = setTimeout(() => ttWatch && connectTikTokLive(ttWatch), TT_RETRY_MS);
+    }
+    if (JSON.stringify({ type: "tiktok", ...s }) === JSON.stringify(ttStatus)) return; // don't log the same wait every minute
+    ttStatus = { type: "tiktok", ...s };
+    console.log(`[tiktok] ${s.connected ? `reading ${s.title}` : s.error || "disconnected"}`);
+    broadcast(ttStatus);
+  };
+  try {
+    ttConn = await connectTikTok(username, {
+      onChat: (m) => addChat({ ...m, source: "tiktok" }),
+      onGift: (g) => ttEvents.gifts.push(g),
+      onFollow: (f) => ttEvents.follows.push(f.from),
+      onStatus: status,
+    });
+  } catch (err) {
+    status({ connected: false, error: err.message });
+  }
+}
+if (process.env.TIKTOK_USERNAME) connectTikTokLive(process.env.TIKTOK_USERNAME);
+
+// Every 20 s, gifts and follows since last time become one note in Lyra's inbox, so she can thank people.
+setInterval(() => {
+  const { gifts, follows } = ttEvents;
+  if (!gifts.length && !follows.length) return;
+  ttEvents = { gifts: [], follows: [] };
+  const parts = [];
+  if (gifts.length) parts.push(`gifts: ${gifts.slice(0, 8).map((g) => `${g.from} sent ${g.count > 1 ? `${g.count}× ` : ""}${g.gift}`).join(", ")}${gifts.length > 8 ? ` and ${gifts.length - 8} more` : ""}`);
+  if (follows.length) parts.push(`new followers: ${[...new Set(follows)].slice(0, 8).join(", ")}${follows.length > 8 ? ` and ${follows.length - 8} more` : ""}`);
+  addChat({ from: "TikTok", text: `(${parts.join("; ")})`, source: "tiktok-event" });
+}, 20_000);
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const send = (code, body = "", type = "text/plain") => {
@@ -601,11 +657,13 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     res.write(`data: ${JSON.stringify({ type: "hello", live, mode, show: SHOW_NAME, podcast: PODCAST_NAME, model: MODEL,
+      tiktokUser: ttWatch || process.env.TIKTOK_USERNAME || "",
       episode: process.env.LATEST_EPISODE || "", episodeTitle: process.env.LATEST_EPISODE_TITLE || "" })}\n\n`);
     if (station) res.write(`data: ${JSON.stringify(stationEvent())}\n\n`);
     if (nowPlaying) res.write(`data: ${JSON.stringify({ type: "nowplaying", title: nowPlaying })}\n\n`);
     if (songVisual.title) res.write(`data: ${JSON.stringify(songVisual)}\n\n`);
     res.write(`data: ${JSON.stringify(ytStatus)}\n\n`);
+    res.write(`data: ${JSON.stringify(ttStatus)}\n\n`);
     res.write(`data: ${JSON.stringify(sourceEvent())}\n\n`);
     if (guest) res.write(`data: ${JSON.stringify({ type: "guest", ...guestCard(guest) })}\n\n`);
     clients.add(res);
@@ -647,6 +705,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && (url.pathname === "/api/track-ended" || url.pathname === "/api/track-error")) {
     const { videoId } = await readBody(req);
     channelTrackEnded(String(videoId || ""), url.pathname.endsWith("error"));
+    return send(204);
+  }
+
+  // Connect to a TikTok LIVE (a username; empty = disconnect).
+  if (req.method === "POST" && url.pathname === "/api/tiktok") {
+    const { username } = await readBody(req);
+    await connectTikTokLive(clean(username, 100));
     return send(204);
   }
 

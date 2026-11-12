@@ -12,6 +12,7 @@
     "prompt": "node --env-file-if-exists=.env src/show-prompt.js"
   },
   "dependencies": {
-    "openai": "^7.56.0"
+    "openai": "^7.56.0",
+    "tiktok-live-connector": "^2.5.0"
   }
 }

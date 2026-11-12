@@ -125,6 +125,30 @@
   body.streaming.talking .holo { transform: translate(calc(-48vw + 160px + 19vh), 5vh) scale(.62); }
   body.streaming .bloom, body.streaming .particles { opacity: 0; }
 
+  /* ---------- Vertical 9:16 for TikTok: open with ?layout=vertical, or press L ---------- */
+  /* A clean broadcast view: TikTok shows its own comments, so chat and controls hide (H brings them back). */
+  body.vertical .stage { inset: 0; }
+  body.vertical .figure { width: 88vw; height: 100vw; }
+  body.vertical .holo { height: auto; transform: translateY(4vh); }
+  body.vertical .platform { width: 62vw; height: 11vw; }
+  body.vertical .beam { width: 52vw; height: 96vw; bottom: 3vw; }
+  body.vertical .bloom { width: 110vw; height: 110vw; top: 28vh; }
+  body.vertical .top { left: 5vw; top: 4vh; gap: 1vh; }
+  body.vertical .brand { font-size: 4.2vw; }
+  body.vertical .station, body.vertical .np { font-size: 3.4vw; max-width: 82vw; }
+  body.vertical .subs { left: 50%; width: 88vw; bottom: 27vh; font-size: 5vw; min-height: 0; padding: 1.4vw 3vw; border-radius: 3vw; } /* above TikTok's comment area */
+  body.vertical .subs:not(:empty) { background: rgba(0, 0, 0, .45); backdrop-filter: blur(4px); }
+  body.vertical:not(.controls) :is(.chat, .vol, .modes, .keys) { display: none; }
+  body.vertical.controls .chat { top: auto; bottom: 2vh; left: 3vw; right: 3vw; width: auto; height: 42vh; }
+  body.vertical .songbg-art { right: 50%; top: 13vh; width: 66vw; transform: translateX(50%); }
+  body.vertical.streaming .holo, body.vertical.streaming.talking .holo { transform: translateY(10vh) scale(.7); }
+  body.vertical.podcast .holo, body.vertical.podcast.guest-right .holo,
+  body.vertical.podcast .bloom, body.vertical.podcast .particles { transform: translateY(12vh) scale(.8); }
+  body.vertical.podcast .guest, body.vertical.podcast.guest-right .guest {
+    left: 50%; top: 13vh; width: 40vw; height: 50vw; transform: translateX(-50%) scale(calc(1 + var(--nova-level) * .015)); }
+  body.vertical.podcast .subs { bottom: auto; top: 41vh; } /* between the guest card and Lyra, not on her face */
+  body.vertical .cam { right: 4vw; top: 4vh; width: 36vw; }
+
   /* ---------- Patch on camera six ---------- */
   .cam { position: fixed; top: 20px; right: 340px; width: 250px; aspect-ratio: 310 / 200; border-radius: 6px; overflow: hidden;
     border: 1px solid rgba(255, 255, 255, .25); box-shadow: 0 10px 40px rgba(0, 0, 0, .6); z-index: 5;
@@ -184,14 +208,17 @@
   .chat h2 { margin: 0; padding: 14px 16px 10px; font-size: 12px; letter-spacing: .2em; color: var(--muted); font-weight: 600; }
   .log { flex: 1; overflow-y: auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
   .log .m b { color: var(--cyan); font-weight: 600; margin-right: 6px; }
-  .log .m .yt { font-size: 9px; font-weight: 700; color: #fff; background: #e62117; border-radius: 3px; padding: 1px 4px; margin-right: 6px; vertical-align: 1px; }
-  .chat h2 { display: flex; justify-content: space-between; align-items: center; }
-  .yt-state { font-size: 10px; letter-spacing: .08em; color: var(--muted); font-weight: 400; max-width: 180px;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: none; }
-  .yt-state.on { color: #ff6b6b; }
-  .yt-form { display: flex; flex-direction: row; gap: 6px; padding: 0 12px 10px; border: 0; }
-  .yt-form input { font-size: 12px; padding: 6px 8px; }
-  .yt-form button { font: inherit; font-size: 11px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; padding: 0 10px; }
+  .tag { font-size: 9px; font-weight: 700; color: #fff; border-radius: 3px; padding: 1px 4px; margin-right: 6px; vertical-align: 1px; letter-spacing: .04em; }
+  .tag.yt { background: #e62117; }
+  .tag.tt { background: #000; box-shadow: -1px 0 0 #25f4ee, 1px 0 0 #fe2c55; }
+  .log .m.event { color: #ffd27a; font-size: 13px; }
+  .link-form { display: flex; flex-direction: row; align-items: center; gap: 6px; padding: 0 12px 6px; border: 0; }
+  .link-form .tag { margin: 0; flex: none; }
+  .link-form input { font-size: 12px; padding: 6px 8px; }
+  .link-form button { font: inherit; font-size: 11px; border-radius: 8px; border: 1px solid var(--line); background: transparent;
+    color: var(--ink); cursor: pointer; padding: 6px 10px; flex: none; }
+  .link-state { padding: 0 14px 10px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .link-state b { color: #7dffa8; font-weight: 600; }
   .log .m.lyra { color: #cfeff6; } .log .m.lyra b { color: #fff; }
   .log .m.sys { color: var(--muted); font-size: 12px; font-style: italic; }
   form { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
@@ -281,11 +308,19 @@
     </div>
     <div class="subs" id="subs"></div>
     <aside class="chat">
-      <h2>CHAT <span class="yt-state" id="ytState">YouTube off</span></h2>
-      <form class="yt-form" id="ytForm">
+      <h2>CHAT</h2>
+      <!-- live chats Lyra reads: YouTube and/or TikTok -->
+      <form class="link-form" id="ytForm">
+        <span class="tag yt">YT</span>
         <input id="ytInput" placeholder="YouTube live link or video id" autocomplete="off">
         <button type="submit">Connect</button>
       </form>
+      <form class="link-form" id="ttForm">
+        <span class="tag tt">TT</span>
+        <input id="ttInput" placeholder="TikTok @username (while live)" autocomplete="off">
+        <button type="submit">Connect</button>
+      </form>
+      <div class="link-state" id="linkState">Only this page's chat</div>
       <div class="log" id="log"></div>
       <form id="chatForm">
         <div class="row">
@@ -294,7 +329,7 @@
         </div>
       </form>
     </aside>
-    <div class="keys"><kbd>H</kbd>hide UI &nbsp; <kbd>B</kbd>full body &nbsp; <kbd>V</kbd>lip sync / video &nbsp; <kbd>S</kbd>streamer &nbsp; <kbd>P</kbd>Patch &nbsp; <kbd>M</kbd>mirror &nbsp; <kbd>F</kbd>fullscreen</div>
+    <div class="keys"><kbd>H</kbd>hide UI &nbsp; <kbd>B</kbd>full body &nbsp; <kbd>V</kbd>lip sync / video &nbsp; <kbd>S</kbd>streamer &nbsp; <kbd>P</kbd>Patch &nbsp; <kbd>L</kbd>vertical &nbsp; <kbd>M</kbd>mirror &nbsp; <kbd>F</kbd>fullscreen</div>
   </div>
 
   <div class="start" id="start">
@@ -309,6 +344,8 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
+// ?layout=vertical: the 9:16 TikTok layout (for TikTok LIVE Studio or OBS)
+if (new URLSearchParams(location.search).get("layout") === "vertical") document.body.classList.add("vertical");
 
 // ---------- Particles ----------
 for (let i = 0; i < 28; i++) {
@@ -492,6 +529,7 @@ events.onmessage = (e) => {
   const ev = JSON.parse(e.data);
   if (ev.type === "hello") {
     names = { radio: ev.show, podcast: ev.podcast };
+    if (ev.tiktokUser && !$("ttInput").value) $("ttInput").value = `@${ev.tiktokUser.replace(/^@/, "")}`;
     if (ev.episode) {
       $("ep").textContent = `New · Episode ${ev.episode}${ev.episodeTitle ? `: ${ev.episodeTitle}` : ""}`;
       $("ep").hidden = false;
@@ -519,14 +557,8 @@ events.onmessage = (e) => {
   if (ev.type === "thinking") $("thinking").classList.add("on");
   if (ev.type === "idle") $("thinking").classList.remove("on");
   if (ev.type === "say" && ctx) speak(ev.text, ev.audio, ev.who);
-  if (ev.type === "chat") addLog(ev.from, ev.text, ev.source === "youtube" ? "from-yt" : "");
-  if (ev.type === "youtube") {
-    const s = $("ytState");
-    s.textContent = ev.connected ? `● YouTube: ${ev.title}` : ev.error ? `YouTube: ${ev.error}` : "YouTube off";
-    s.title = s.textContent;
-    s.classList.toggle("on", Boolean(ev.connected));
-    $("ytForm").querySelector("button").textContent = ev.connected ? "Disconnect" : "Connect";
-  }
+  if (ev.type === "chat") addLog(ev.from, ev.text, { youtube: "from-yt", tiktok: "from-tt", "tiktok-event": "event" }[ev.source] || "");
+  if (ev.type === "youtube" || ev.type === "tiktok") showLink(ev);
 };
 events.onerror = () => addLog("", "Lost connection to the show server…", "sys");
 
@@ -669,16 +701,36 @@ $("chatForm").onsubmit = (e) => {
   $("msg").value = "";
 };
 $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") $("chatForm").requestSubmit(); });
+// ---------- Live chats Lyra reads (YouTube / TikTok) ----------
+const links = { youtube: null, tiktok: null };
+function showLink(ev) {
+  links[ev.type] = ev;
+  const form = $(ev.type === "youtube" ? "ytForm" : "ttForm");
+  const active = Boolean(ev.connected || ev.waiting); // waiting = watching for the live to start
+  form.querySelector("button").textContent = active ? (ev.waiting ? "Stop" : "Disconnect") : "Connect";
+  form.querySelector("input").disabled = active;
+  const parts = Object.entries(links).filter(([, s]) => s && (s.connected || s.error)).map(([k, s]) => {
+    const label = k === "youtube" ? "YouTube" : "TikTok";
+    return s.connected ? `<b>●</b> ${label}: ${escapeHtml(s.title)}` : `${label}: ${escapeHtml(s.error)}`;
+  });
+  $("linkState").innerHTML = parts.join(" · ") || "Only this page's chat";
+  $("linkState").title = $("linkState").textContent;
+}
 $("ytForm").onsubmit = (e) => {
   e.preventDefault();
-  const connected = $("ytState").classList.contains("on");
-  post("/api/youtube", { video: connected ? "" : $("ytInput").value.trim() });
+  post("/api/youtube", { video: links.youtube?.connected ? "" : $("ytInput").value.trim() });
+};
+$("ttForm").onsubmit = (e) => {
+  e.preventDefault();
+  const active = links.tiktok?.connected || links.tiktok?.waiting;
+  post("/api/tiktok", { username: active ? "" : $("ttInput").value.trim() });
 };
 
 document.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT") return;
   const k = e.key.toLowerCase();
-  if (k === "h") document.body.classList.toggle("clean");
+  if (k === "h") document.body.classList.toggle(document.body.classList.contains("vertical") ? "controls" : "clean");
+  if (k === "l") document.body.classList.toggle("vertical");
   if (k === "m") document.body.classList.toggle("mirror");
   if (k === "f") document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
   if (k === "b") document.body.classList.toggle("full");
@@ -691,7 +743,7 @@ function addLog(who, text, cls = "", color = "") {
   const div = document.createElement("div");
   div.className = `m ${cls}`;
   const style = color ? ` style="color:${color}"` : "";
-  const tag = cls.includes("from-yt") ? '<span class="yt">YT</span>' : "";
+  const tag = cls.includes("from-yt") ? '<span class="tag yt">YT</span>' : cls.includes("from-tt") ? '<span class="tag tt">TT</span>' : "";
   div.innerHTML = who ? `${tag}<b${style}>${escapeHtml(who)}</b>${escapeHtml(text)}` : escapeHtml(text);
   $("log").appendChild(div);
   while ($("log").children.length > 80) $("log").firstChild.remove();
