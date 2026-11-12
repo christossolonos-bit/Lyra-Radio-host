@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lyra Radio</title>
+<style>
+  :root {
+    --cyan: #5fe8ff;
+    --cyan-soft: rgba(95, 232, 255, 0.35);
+    --ink: #e6fbff;
+    --muted: #7fa9b3;
+    --panel: rgba(6, 22, 28, 0.72);
+    --line: rgba(95, 232, 255, 0.22);
+    --level: 0;        /* 0..1, how loud Lyra is right now (set from JS) */
+    --nova-level: 0;   /* same for Nova in the podcast */
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; color: var(--ink); overflow: hidden;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
+
+  /* ---------- Hologram ---------- */
+  .stage { position: fixed; inset: 0 320px 0 0; display: grid; place-items: center; } /* centred in the space left of chat */
+  body.clean .stage { inset: 0; }
+  body.clean .subs { left: 50%; width: min(820px, 80vw); }
+  .bloom { position: absolute; width: 70vh; height: 70vh; border-radius: 50%;
+    background: radial-gradient(circle, rgba(60, 200, 240, calc(0.10 + var(--level) * 0.18)) 0%, transparent 65%);
+    filter: blur(20px); top: 12vh; }
+  .holo { position: relative; height: 86vh; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; }
+  .float { position: relative; animation: float 7s ease-in-out infinite; }
+  .figure { position: relative; animation: flicker 9s steps(1) infinite; }
+  /* Portrait: two stacked video loops (idle + talking). Full body: a still image. */
+  .figure { width: 62vh; height: 70vh;
+    /* clip the shimmer and scanlines to her soft oval too, so no box edge shows */
+    -webkit-mask-image: radial-gradient(ellipse 60% 58% at 50% 46%, #000 60%, transparent 100%);
+            mask-image: radial-gradient(ellipse 60% 58% at 50% 46%, #000 60%, transparent 100%); }
+  body.full .figure { -webkit-mask-image: none; mask-image: none; }
+  .figure .layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; mix-blend-mode: screen;
+    transform: scale(calc(1 + var(--level) * 0.012));
+    filter: brightness(calc(1.08 + var(--level) * 0.55)) saturate(1.15)
+            drop-shadow(0 0 calc(10px + var(--level) * 34px) var(--cyan-soft));
+    -webkit-mask-image: radial-gradient(ellipse 58% 56% at 50% 46%, #000 62%, transparent 100%);
+            mask-image: radial-gradient(ellipse 58% 56% at 50% 46%, #000 62%, transparent 100%);
+    transition: filter 60ms linear, opacity 180ms linear; }
+  #talk { opacity: 0; }
+  body.talking #talk { opacity: 1; }
+  body.talking #idle { opacity: 0; }
+  /* Lip sync (default): one face, the mouth frame follows her voice. V switches to the video loops. */
+  #lips img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0;
+    transition: opacity 90ms ease-out; } /* soft blend between mouth shapes */
+  #lips img.on { opacity: 1; }
+  body.sync #idle, body.sync #talk { display: none; }
+  body:not(.sync) #lips { display: none; }
+  body.full #lips { display: none; }
+  #full { display: none; }
+  body.full .figure { width: auto; height: 80vh; }
+  body.full #idle, body.full #talk { display: none; }
+  body.full #full { display: block; position: static; width: auto; height: 80vh;
+    -webkit-mask-image: radial-gradient(ellipse 62% 60% at 50% 50%, #000 70%, transparent 100%);
+            mask-image: radial-gradient(ellipse 62% 60% at 50% 50%, #000 70%, transparent 100%); }
+  /* scanlines + a slow glint moving down */
+  .figure::after { content: ""; position: absolute; inset: 0; pointer-events: none; mix-blend-mode: multiply;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,0.28) 0 1px, transparent 1px 3px); }
+  .figure::before { content: ""; position: absolute; left: 0; right: 0; height: 18%; pointer-events: none; z-index: 1;
+    background: linear-gradient(transparent, rgba(140, 240, 255, 0.10), transparent);
+    animation: glint 6s linear infinite; mix-blend-mode: screen; }
+  .beam { position: absolute; bottom: 4vh; width: 34vh; height: 62vh; pointer-events: none;
+    background: linear-gradient(to top, rgba(95,232,255, calc(0.16 + var(--level)*0.2)), transparent 75%);
+    clip-path: polygon(30% 100%, 70% 100%, 100% 0, 0 0); filter: blur(6px); }
+  .platform { position: relative; width: 40vh; height: 7vh; margin-top: -1vh; border-radius: 50%;
+    background: radial-gradient(ellipse at center, rgba(160,245,255, calc(0.55 + var(--level)*0.45)) 0%,
+      rgba(60,200,240,0.35) 35%, rgba(20,60,80,0.6) 62%, transparent 72%);
+    box-shadow: 0 0 calc(30px + var(--level)*50px) rgba(95,232,255,0.35);
+    border: 1px solid rgba(160, 240, 255, 0.35); }
+  .platform::after { content: ""; position: absolute; inset: 22% 18%; border-radius: 50%;
+    border: 1px dashed rgba(160, 240, 255, 0.45); animation: spin 30s linear infinite; }
+  body.full .beam, body.full .platform { display: none; } /* the full-body image has its own platform */
+
+  .particles span { position: absolute; bottom: 8vh; width: 2px; height: 2px; border-radius: 50%;
+    background: var(--cyan); box-shadow: 0 0 6px var(--cyan); opacity: 0; animation: rise linear infinite; }
+
+  .thinking { position: absolute; bottom: 1vh; display: flex; gap: 8px; opacity: 0; transition: opacity .3s; }
+  .thinking.on { opacity: 1; }
+  .thinking i { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 8px var(--cyan);
+    animation: blink 1.2s infinite; }
+  .thinking i:nth-child(2) { animation-delay: .2s } .thinking i:nth-child(3) { animation-delay: .4s }
+
+  body.mirror .stage { transform: scaleX(-1); } /* for Pepper's ghost glass */
+
+  @keyframes float { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-1.2vh) } }
+  @keyframes flicker { 0%,100% { opacity: 1 } 41% { opacity: .82 } 42% { opacity: 1 } 77% { opacity: .9 } 78% { opacity: 1 } }
+  @keyframes glint { from { top: -20% } to { top: 110% } }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  @keyframes rise { 0% { opacity: 0; transform: translateY(0) } 15% { opacity: .9 } 100% { opacity: 0; transform: translateY(-60vh) } }
+  @keyframes blink { 0%,100% { opacity: .2 } 50% { opacity: 1 } }
+
+  /* ---------- Overlay UI ---------- */
+  .ui { transition: opacity .4s; }
+  body.clean .ui { opacity: 0; pointer-events: none; }
+  .top { position: fixed; top: 20px; left: 24px; display: flex; flex-direction: column; gap: 8px; }
+  .brand { font-weight: 700; letter-spacing: .32em; font-size: 15px; color: var(--cyan); text-shadow: 0 0 12px var(--cyan-soft); }
+  .live { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; font-size: 11px; letter-spacing: .15em; color: #ff6b6b; }
+  .live[hidden] { display: none; }
+  .live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #ff5050; box-shadow: 0 0 8px #ff5050; }
+  .station { font-size: 13px; color: var(--muted); max-width: 46vw; }
+  .station b { color: var(--ink); font-weight: 600; }
+  .np { font-size: 13px; color: var(--ink); max-width: 46vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .np::before { content: "♪ "; color: var(--cyan); }
+  .np[hidden], body.podcast .np { display: none; }
+  .modes { display: flex; gap: 6px; }
+  .modes button { font: inherit; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; padding: 5px 12px;
+    border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+  .modes button.on { background: var(--cyan); border-color: var(--cyan); color: #001418; }
+
+  /* ---------- Podcast: Nova on the left looking across, Lyra on the right ---------- */
+  .guest { display: none; position: absolute; left: 7vw; top: 50%; width: 36vh; height: 46vh; border-radius: 18px; overflow: hidden;
+    transform: translateY(-55%) scale(calc(1 + var(--nova-level) * 0.015));
+    box-shadow: 0 0 0 1px rgba(255, 205, 160, .25), 0 20px 60px rgba(0, 0, 0, .6), 0 0 calc(var(--nova-level) * 70px) rgba(255, 190, 130, .45); }
+  .guest img { width: 100%; height: 100%; object-fit: cover; filter: brightness(calc(.9 + var(--nova-level) * .18)); }
+  .guest span { position: absolute; left: 14px; bottom: 12px; font-size: 12px; letter-spacing: .3em; color: var(--guest-color, #ffe9d6);
+    text-shadow: 0 1px 6px rgba(0, 0, 0, .8); }
+  .guest img { transition: opacity .4s; }
+  body.podcast .guest { display: block; }
+  /* the guest sits on whichever side keeps them facing Lyra; Lyra shifts the other way; both stay clear of the chat */
+  body.podcast .holo, body.podcast .bloom, body.podcast .particles { transform: translateX(6vw); }
+  body.podcast .guest { left: calc(50% + 6vw - 69vh); }
+  body.podcast.guest-right .holo, body.podcast.guest-right .bloom, body.podcast.guest-right .particles { transform: translateX(-6vw); }
+  body.podcast.guest-right .guest { left: calc(50% - 6vw + 33vh); }
+  body.podcast .station, body.podcast .vol label:first-child { display: none; }
+  .subs .who { font-weight: 600; margin-right: 8px; color: var(--cyan); }
+  @media (max-width: 800px) { .guest { left: 4vw; top: 30%; width: 22vh; height: 28vh; } }
+
+  .vol { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+  .vol label { display: flex; align-items: center; gap: 10px; font-size: 12px; letter-spacing: .08em; color: var(--muted); }
+  .vol input { width: 130px; padding: 0; border: 0; background: none; accent-color: var(--cyan); cursor: pointer; }
+
+  .subs { position: fixed; left: calc(50% - 160px); bottom: 5vh; transform: translateX(-50%); width: min(760px, calc(100vw - 420px));
+    text-align: center; font-size: clamp(16px, 2.1vw, 24px); line-height: 1.45; color: #fff;
+    text-shadow: 0 0 14px rgba(0,0,0,.9), 0 0 4px rgba(0,0,0,.9); min-height: 3em; }
+  .subs .dim { color: rgba(255,255,255,.28); }
+
+  .chat { position: fixed; right: 20px; top: 20px; bottom: 20px; width: 300px; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(8px); }
+  .chat h2 { margin: 0; padding: 14px 16px 10px; font-size: 12px; letter-spacing: .2em; color: var(--muted); font-weight: 600; }
+  .log { flex: 1; overflow-y: auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
+  .log .m b { color: var(--cyan); font-weight: 600; margin-right: 6px; }
+  .log .m.lyra { color: #cfeff6; } .log .m.lyra b { color: #fff; }
+  .log .m.sys { color: var(--muted); font-size: 12px; font-style: italic; }
+  form { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
+  input { width: 100%; background: rgba(0,0,0,.45); color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 10px; font: inherit; font-size: 14px; outline: none; }
+  input:focus { border-color: var(--cyan); }
+  .row { display: flex; gap: 8px; }
+  .row input:first-child { width: 34%; }
+  .keys { position: fixed; left: 24px; bottom: 18px; font-size: 11px; color: rgba(127,169,179,.7); letter-spacing: .05em; }
+  .keys kbd { border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; margin-right: 3px; font: inherit; }
+
+  /* ---------- Start screen ---------- */
+  .start { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.75); z-index: 10; }
+  .start.hidden { display: none; }
+  .start div { text-align: center; }
+  .start h1 { font-weight: 300; letter-spacing: .4em; color: var(--cyan); text-shadow: 0 0 20px var(--cyan-soft); margin: 0 0 8px; }
+  .start p { color: var(--muted); margin: 0 0 24px; }
+  .start button { font: inherit; font-size: 16px; letter-spacing: .2em; padding: 12px 30px; border-radius: 999px; cursor: pointer;
+    color: #001418; background: var(--cyan); border: 0; box-shadow: 0 0 24px var(--cyan-soft); }
+
+  @media (max-width: 800px) {
+    .chat { top: auto; height: 38vh; left: 12px; right: 12px; width: auto; bottom: 12px; }
+    .subs { bottom: 42vh; width: 90vw; }
+    .keys { display: none; }
+  }
+</style>
+</head>
+<body class="sync">
+  <div class="stage">
+    <div class="bloom"></div>
+    <div class="particles" id="particles"></div>
+    <div class="holo">
+      <div class="beam"></div>
+      <div class="float"><div class="figure">
+        <video id="idle" class="layer" src="clips/lyra_idle_loop.mp4" poster="clips/lyra_live_first.png" muted loop playsinline autoplay></video>
+        <video id="talk" class="layer" src="clips/lyra_talk_loop.mp4" muted loop playsinline preload="auto"></video>
+        <div id="lips" class="layer">
+          <img data-shape="rest" class="on" src="clips/lipsync/rest.jpg" alt="Lyra">
+          <img data-shape="small" src="clips/lipsync/small.jpg" alt="">
+          <img data-shape="ah" src="clips/lipsync/ah.jpg" alt="">
+          <img data-shape="ee" src="clips/lipsync/ee.jpg" alt="">
+          <img data-shape="oo" src="clips/lipsync/oo.jpg" alt="">
+        </div>
+        <img id="full" class="layer" src="lyra-full.png" alt="Lyra">
+      </div></div>
+      <div class="platform"></div>
+      <div class="thinking" id="thinking"><i></i><i></i><i></i></div>
+    </div>
+    <!-- Podcast co-host. Stand-in until the "Nova's desk" plate is generated. -->
+    <div class="guest" id="guest"><img id="guestImg" src="cast/nova.jpg" alt="Nova"><span id="guestName">NOVA</span></div>
+  </div>
+
+  <div class="ui">
+    <div class="top">
+      <div><span class="brand" id="brand">LYRA RADIO</span><span class="live" id="liveTag" hidden>LIVE</span></div>
+      <div class="modes" id="modes">
+        <button data-mode="radio" class="on">Radio</button>
+        <button data-mode="podcast">Podcast</button>
+      </div>
+      <div class="station" id="station">Tuning in…</div>
+      <div class="np" id="np" hidden></div>
+      <div class="vol">
+        <label>Music <input type="range" id="musicVol" min="0" max="1" step="0.01"></label>
+        <label>Lyra <input type="range" id="voiceVol" min="0" max="1.5" step="0.01"></label>
+      </div>
+    </div>
+    <div class="subs" id="subs"></div>
+    <aside class="chat">
+      <h2>CHAT</h2>
+      <div class="log" id="log"></div>
+      <form id="chatForm">
+        <div class="row">
+          <input id="name" placeholder="Name" maxlength="30" autocomplete="off">
+          <input id="msg" placeholder="Say something to Lyra…" maxlength="300" autocomplete="off">
+        </div>
+      </form>
+    </aside>
+    <div class="keys"><kbd>H</kbd>hide UI &nbsp; <kbd>B</kbd>full body &nbsp; <kbd>V</kbd>lip sync / video &nbsp; <kbd>M</kbd>mirror &nbsp; <kbd>F</kbd>fullscreen</div>
+  </div>
+
+  <div class="start" id="start">
+    <div>
+      <h1>LYRA</h1>
+      <p>Hologram and radio</p>
+      <button id="goLive">GO LIVE</button>
+    </div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+
+// ---------- Particles ----------
+for (let i = 0; i < 28; i++) {
+  const s = document.createElement("span");
+  s.style.left = `calc(50% + ${(Math.random() - 0.5) * 36}vh)`;
+  s.style.animationDuration = `${6 + Math.random() * 8}s`;
+  s.style.animationDelay = `${-Math.random() * 14}s`;
+  $("particles").appendChild(s);
+}
+
+// ---------- Audio ----------
+let ctx, analyser, levelData, freqData;
+const station = new Audio();
+// Volume sliders (remembered in this browser). Music ducks to 15% of its level while Lyra talks.
+let musicVol = Number(localStorageGet("lyra-music-vol") ?? 0.85);
+let voiceVol = Number(localStorageGet("lyra-voice-vol") ?? 1);
+let ducked = false, voiceGain = null;
+station.volume = musicVol;
+$("musicVol").value = musicVol;
+$("voiceVol").value = voiceVol;
+$("musicVol").addEventListener("input", (e) => {
+  musicVol = Number(e.target.value);
+  station.volume = ducked ? musicVol * 0.15 : musicVol;
+  localStorageSet("lyra-music-vol", musicVol);
+});
+$("voiceVol").addEventListener("input", (e) => {
+  voiceVol = Number(e.target.value);
+  if (voiceGain) voiceGain.gain.value = voiceVol;
+  localStorageSet("lyra-voice-vol", voiceVol);
+});
+let stationFailTimer = null;
+station.addEventListener("error", () => {
+  if (!station.src) return;
+  clearTimeout(stationFailTimer); // ask the server for another station, once
+  stationFailTimer = setTimeout(() => post("/api/station-failed"), 1500);
+});
+
+function setupAudio() {
+  ctx = new AudioContext();
+  analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  analyser.smoothingTimeConstant = 0.35; // quick, so the mouth keeps up with syllables
+  levelData = new Uint8Array(analyser.fftSize);
+  freqData = new Uint8Array(analyser.frequencyBinCount);
+  // voice -> analyser (lip sync reads it here, unaffected by volume) -> volume -> speakers
+  voiceGain = ctx.createGain();
+  voiceGain.gain.value = voiceVol;
+  analyser.connect(voiceGain);
+  voiceGain.connect(ctx.destination);
+  requestAnimationFrame(tick);
+}
+
+// Smooth loudness of Lyra's voice -> --level, which drives her glow and brightness.
+let level = 0;
+function tick() {
+  analyser.getByteTimeDomainData(levelData);
+  let sum = 0;
+  for (const v of levelData) sum += ((v - 128) / 128) ** 2;
+  const rms = Math.min(1, Math.sqrt(sum / levelData.length) * 4);
+  level += (rms - level) * (rms > level ? 0.5 : 0.12);
+  root.style.setProperty(speaker !== "Lyra" ? "--nova-level" : "--level", level.toFixed(3)); // --nova-level = whoever the guest is
+  lipSync(Math.sqrt(sum / levelData.length)); // raw loudness, not the boosted glow value
+  requestAnimationFrame(tick);
+}
+
+// ---------- Lip sync ----------
+// Loudness = syllables (each syllable is a burst of sound, so the mouth opens on it and closes between).
+// Where the sound's energy sits = vowel shape: lots of high energy = "ee", energy only down low = "oo", else "ah".
+const shapes = Object.fromEntries([...document.querySelectorAll("#lips img")].map((img) => [img.dataset.shape, img]));
+let shape = "rest", shapeSince = 0, mouth = 0, peak = 0.05;
+// Lip-sync speed. Higher hold = slower, calmer mouth. Lower smooth = softer, less twitchy.
+const LIPS_HOLD_MS = 120;
+const LIPS_SMOOTH = 0.35;
+const lipsDebug = (window.__lips = { counts: {}, frames: 0 });
+
+function band(fromHz, toHz) {
+  const hz = ctx.sampleRate / analyser.fftSize;
+  let sum = 0, n = 0;
+  for (let i = Math.floor(fromHz / hz); i <= Math.ceil(toHz / hz); i++) { sum += freqData[i]; n++; }
+  return sum / n / 255;
+}
+
+// open = loudness compared with her own recent peak (0..1), so each syllable peaks and the gaps between dip.
+function pickShape(open) {
+  if (open < 0.22) return "rest";
+  if (open < 0.6) return "small";
+  analyser.getByteFrequencyData(freqData);
+  const low = band(250, 900), mid = band(900, 1800), high = band(2200, 4500);
+  if (high > low * 0.7 && high > mid * 0.8) return "ee";
+  if (mid < low * 0.55) return "oo";
+  return "ah";
+}
+
+function lipSync(rms) {
+  peak = Math.max(rms, peak * 0.996, 0.02); // fades over a couple of seconds, so quiet and loud lines both work
+  mouth += (rms / peak - mouth) * LIPS_SMOOTH;
+  const now = performance.now();
+  const next = document.body.classList.contains("talking") ? pickShape(mouth) : "rest";
+  if (next === shape || now - shapeSince < LIPS_HOLD_MS) return; // hold each shape so it doesn't jitter
+  shapes[shape]?.classList.remove("on");
+  shapes[next]?.classList.add("on");
+  shape = next;
+  shapeSince = now;
+  if (next !== "rest" || lipsDebug.frames) { lipsDebug.counts[next] = (lipsDebug.counts[next] || 0) + 1; lipsDebug.frames++; }
+}
+
+function duck(on) {
+  ducked = on;
+  const target = on ? musicVol * 0.15 : musicVol;
+  const step = () => {
+    const d = target - station.volume;
+    if (Math.abs(d) < 0.02) return (station.volume = target);
+    station.volume = Math.max(0, Math.min(1, station.volume + d * 0.2));
+    setTimeout(step, 30);
+  };
+  step();
+}
+
+// ---------- Lyra's face: idle loop vs talking loop ----------
+// No idle loop yet? The idle video falls back to its poster (the still first frame).
+$("idle").addEventListener("error", () => $("idle").removeAttribute("src"), { once: true });
+function setTalking(on) {
+  const talk = $("talk");
+  if (on) { talk.currentTime = 0; talk.play().catch(() => {}); }
+  else setTimeout(() => talk.pause(), 200);
+  document.body.classList.toggle("talking", on);
+}
+
+// ---------- Someone speaking (Lyra, or Nova in the podcast) ----------
+let subsTimer = null;
+let speaker = "Lyra";
+function speak(text, url, who = "Lyra") {
+  $("thinking").classList.remove("on");
+  speaker = who;
+  root.style.setProperty(who !== "Lyra" ? "--level" : "--nova-level", "0"); // only the speaker glows
+  addLog(who, text, who === "Lyra" ? "lyra" : "", who === "Lyra" ? "" : guestColor);
+  const voice = new Audio(url);
+  ctx.createMediaElementSource(voice).connect(analyser);
+  duck(true);
+  // Lyra's mouth lip-syncs; Nova (a still for now) glows warm while she talks.
+  voice.addEventListener("playing", () => (who === "Lyra" ? setTalking(true) : document.body.classList.add("nova-talking")), { once: true });
+
+  // Subtitles: reveal the words in step with the audio length.
+  const words = text.split(/\s+/);
+  const name = document.body.classList.contains("podcast")
+    ? `<span class="who" style="${who === "Lyra" ? "" : `color:${guestColor}`}">${escapeHtml(who)}</span>` : "";
+  const render = (n) => ($("subs").innerHTML =
+    `${name}${escapeHtml(words.slice(0, n).join(" "))} <span class="dim">${escapeHtml(words.slice(n).join(" "))}</span>`);
+  render(0);
+  voice.addEventListener("loadedmetadata", () => {
+    const per = (voice.duration * 1000) / words.length;
+    let n = 0;
+    clearInterval(subsTimer);
+    subsTimer = setInterval(() => { render(++n); if (n >= words.length) clearInterval(subsTimer); }, per);
+  });
+
+  const finished = () => {
+    setTalking(false);
+    document.body.classList.remove("nova-talking");
+    duck(false);
+    clearInterval(subsTimer);
+    render(words.length);
+    setTimeout(() => ($("subs").textContent = ""), 4000);
+    post("/api/spoken");
+  };
+  voice.addEventListener("ended", finished, { once: true });
+  voice.play().catch(finished);
+}
+
+// ---------- Server events ----------
+const events = new EventSource("/api/events");
+events.onmessage = (e) => {
+  const ev = JSON.parse(e.data);
+  if (ev.type === "hello") {
+    names = { radio: ev.show, podcast: ev.podcast };
+    applyMode(ev.mode);
+    if (ev.live) $("goLive").textContent = "JOIN";
+  }
+  if (ev.type === "mode") applyMode(ev.mode);
+  if (ev.type === "guest") showGuest(ev);
+  if (ev.type === "nowplaying") { $("np").textContent = ev.title; $("np").hidden = !ev.title; }
+  if (ev.type === "live") $("liveTag").hidden = false;
+  if (ev.type === "station") {
+    $("station").innerHTML = `📻 <b>${escapeHtml(ev.name)}</b> · ${escapeHtml(ev.country || "")}` +
+      (ev.tags.length ? ` · ${escapeHtml(ev.tags.join(", "))}` : "");
+    station.dataset.pending = ev.url;
+    if (ctx && mode === "radio") { station.src = ev.url; station.play().catch(() => {}); }
+  }
+  if (ev.type === "thinking") $("thinking").classList.add("on");
+  if (ev.type === "idle") $("thinking").classList.remove("on");
+  if (ev.type === "say" && ctx) speak(ev.text, ev.audio, ev.who);
+  if (ev.type === "chat") addLog(ev.from, ev.text);
+};
+events.onerror = () => addLog("", "Lost connection to the show server…", "sys");
+
+// ---------- Podcast guest (Nova, Marcus, Juno or Solo) ----------
+let guestColor = "#ffcf9e";
+function showGuest({ name, image, side, color }) {
+  guestColor = color;
+  root.style.setProperty("--guest-color", color);
+  document.body.classList.toggle("guest-right", side === "right");
+  const img = $("guestImg");
+  img.style.opacity = 0;
+  setTimeout(() => { img.src = image; img.alt = name; $("guestName").textContent = name.toUpperCase(); img.style.opacity = 1; }, 400);
+}
+
+// ---------- Radio / podcast ----------
+let mode = "radio", names = { radio: "Lyra Radio", podcast: "Feelings Have Data" };
+function applyMode(m) {
+  mode = m;
+  document.body.classList.toggle("podcast", m === "podcast");
+  document.querySelectorAll("#modes button").forEach((b) => b.classList.toggle("on", b.dataset.mode === m));
+  $("brand").textContent = names[m].toUpperCase();
+  $("msg").placeholder = m === "podcast" ? "Say something to Lyra and Nova…" : "Say something to Lyra…";
+  if (m === "podcast") station.pause(); // the podcast has no radio underneath
+  else if (ctx && station.dataset.pending) { station.src = station.dataset.pending; station.play().catch(() => {}); }
+}
+document.querySelectorAll("#modes button").forEach((b) => (b.onclick = () => post("/api/mode", { mode: b.dataset.mode })));
+
+// ---------- UI ----------
+$("goLive").onclick = async () => {
+  setupAudio();
+  await ctx.resume();
+  $("start").classList.add("hidden");
+  $("liveTag").hidden = false;
+  if (mode === "radio" && station.dataset.pending) { station.src = station.dataset.pending; station.play().catch(() => {}); }
+  post("/api/start");
+};
+
+$("name").value = localStorageGet("lyra-name") || "";
+$("chatForm").onsubmit = (e) => {
+  e.preventDefault();
+  const text = $("msg").value.trim();
+  if (!text) return;
+  const from = $("name").value.trim() || "viewer";
+  localStorageSet("lyra-name", from);
+  post("/api/chat", { from, text });
+  $("msg").value = "";
+};
+$("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") $("chatForm").requestSubmit(); });
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT") return;
+  const k = e.key.toLowerCase();
+  if (k === "h") document.body.classList.toggle("clean");
+  if (k === "m") document.body.classList.toggle("mirror");
+  if (k === "f") document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+  if (k === "b") document.body.classList.toggle("full");
+  if (k === "v") document.body.classList.toggle("sync");
+});
+
+function addLog(who, text, cls = "", color = "") {
+  const div = document.createElement("div");
+  div.className = `m ${cls}`;
+  const style = color ? ` style="color:${color}"` : "";
+  div.innerHTML = who ? `<b${style}>${escapeHtml(who)}</b>${escapeHtml(text)}` : escapeHtml(text);
+  $("log").appendChild(div);
+  while ($("log").children.length > 80) $("log").firstChild.remove();
+  $("log").scrollTop = $("log").scrollHeight;
+}
+function post(url, body) {
+  return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).catch(() => {});
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
+function localStorageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function localStorageSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+</script>
+</body>
+</html>

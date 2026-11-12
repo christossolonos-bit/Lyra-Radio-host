@@ -1,0 +1,7 @@
+node_modules/
+.env
+voice-samples/
+voice-refs/
+# raw generation output (the page uses the loop) and debug images
+public/clips/lyra_talk.mp4
+tools/lipsync_check.jpg

@@ -1,0 +1,48 @@
+# Lyra Radio playlist. One audio file per line. Lines starting with # are skipped.
+# Only list music you own the rights to: anything else risks YouTube copyright strikes.
+# Optional: add " | Song Title | Artist" after a path to override what Lyra says.
+
+# Lyra AI score
+D:\Music for distrokid\Solo Stories\Lyra AI movie\Focus Flow.mp3
+D:\Music for distrokid\Solo Stories\Lyra AI movie\Soft Felt Piano.mp3
+D:\Music for distrokid\Solo Stories\Lyra AI movie\Watching You Glide.mp3
+D:\Music for distrokid\Solo Stories\Lyra AI movie\Measured Exchange.mp3
+D:\Music for distrokid\Solo Stories\Lyra AI movie\Uneasy Two Notes.mp3
+# Credited to travisbollenbach: uncomment once you're sure you can stream it.
+# D:\Music for distrokid\Solo Stories\Lyra AI movie\Come On In, Little Traveler.mp3
+
+# Songs
+D:\Music for distrokid\Backyard Summers.wav
+D:\Music for distrokid\Brick By Brick.wav
+D:\Music for distrokid\Crown of Hercules.mp3
+D:\Music for distrokid\Determination.wav
+D:\Music for distrokid\Dream in Satin.wav
+D:\Music for distrokid\Dust in the Aisle.wav
+D:\Music for distrokid\Endless Anthem.wav
+D:\Music for distrokid\Endless Mile.wav
+D:\Music for distrokid\From Ashes Rise.wav
+D:\Music for distrokid\Hand in Mine.wav
+D:\Music for distrokid\Hooked on Us.wav
+D:\Music for distrokid\Lift My Head Again.wav
+D:\Music for distrokid\Luna and the Streamlight.wav
+D:\Music for distrokid\Man I’m Me (When I Find You).mp3
+D:\Music for distrokid\Paper Cups and Bass.wav
+D:\Music for distrokid\Quiet Wonder.mp3
+D:\Music for distrokid\Riko Rayen.wav
+D:\Music for distrokid\Saving the Stories.wav
+D:\Music for distrokid\Soft Circuits.wav
+D:\Music for distrokid\Stand Up Man.wav
+D:\Music for distrokid\Surrender Tonight.wav
+D:\Music for distrokid\Suspended Harmony.mp3
+D:\Music for distrokid\Tension Unresolved.mp3
+D:\Music for distrokid\The Rest of Our Lives.wav
+D:\Music for distrokid\The Smiling Machine.wav
+D:\Music for distrokid\Timeless Vows.wav
+
+# Lounge
+D:\Music for distrokid\lounge music\Aura Bloom.wav
+D:\Music for distrokid\lounge music\Bailecito de Miel.wav
+D:\Music for distrokid\lounge music\Lobby Sunlight.wav
+D:\Music for distrokid\lounge music\Marble Lobby.wav
+D:\Music for distrokid\lounge music\Velvet After Hours.wav
+D:\Music for distrokid\lounge music\Velvet Lobby.wav

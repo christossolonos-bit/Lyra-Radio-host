@@ -1,0 +1,17 @@
+{
+  "name": "lyra-live",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lyra live: the Lyra AI character hosting her own show",
+  "type": "module",
+  "scripts": {
+    "chat": "node --env-file=.env src/chat.js",
+    "radio": "node --env-file=.env src/radio.js",
+    "radio:playlist": "node --env-file=.env src/radio-playlist.js",
+    "holo": "node --env-file=.env src/server.js",
+    "prompt": "node --env-file-if-exists=.env src/show-prompt.js"
+  },
+  "dependencies": {
+    "openai": "^7.56.0"
+  }
+}
