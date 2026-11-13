@@ -97,6 +97,24 @@ export async function nowPlayingTitle(url, timeoutMs = 7000) {
   }
 }
 
+// Will this stream play on our page? Some stations (SomaFM, for example) refuse requests that come from another website,
+// so test it the way a visitor's browser will ask: from our site's address. Those stations are skipped, not worked around.
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+export async function playableFrom(url, siteOrigin, timeoutMs = 4000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": BROWSER_UA, Referer: `${siteOrigin}/` } });
+    const type = res.headers.get("content-type") || "";
+    return res.ok && /audio|mpeg|aac|ogg|octet-stream/i.test(type);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+    ctrl.abort(); // don't keep downloading audio
+  }
+}
+
 // Station IDs and ads aren't songs.
 function cleanTitle(t) {
   const s = t.replace(/\0/g, "").trim();

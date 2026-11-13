@@ -30,7 +30,7 @@ const viewerBlock = (messages, intro = "Viewer messages") => messages.length
     `If someone shared something small worth remembering (where they're from, what they love, what they're doing), ` +
     `save it with [[remember: Name | short fact]] on its own line at the end.`
   : "";
-import { findStations, splitStationTag, describeStation, nowPlayingTitle, pickOne } from "./radio.js";
+import { findStations, splitStationTag, describeStation, nowPlayingTitle, pickOne, playableFrom } from "./radio.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(here, "..", "public");
@@ -47,6 +47,8 @@ const ADMIN_KEY = process.env.ADMIN_KEY || "";
 const PUBLIC = Boolean(ADMIN_KEY);
 const HOST = process.env.HOST || (PUBLIC || process.env.RAILWAY_ENVIRONMENT ? "0.0.0.0" : "127.0.0.1");
 const isAdmin = (req, url) => !PUBLIC || req.headers["x-admin-key"] === ADMIN_KEY || url.searchParams.get("key") === ADMIN_KEY;
+// The address visitors open (Railway provides RAILWAY_PUBLIC_DOMAIN): stations are tested as if requested from it.
+const SITE_ORIGIN = process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : `http://localhost:${PORT}`);
 const MAX_TALKS_PER_HOUR = Number(process.env.MAX_TALKS_PER_HOUR || 120); // a cap on voice costs if chat gets busy
 const CHAT_GAP_SEC = 6;   // one message per visitor every 6 seconds
 const RESERVED_NAMES = /^(lyra|nova|marcus|juno|solo|patch|tiktok|youtube|admin|system|moderator)$/i;
@@ -238,11 +240,19 @@ async function tuneTo(words) {
     console.log(`[radio] no station found for "${words}"`);
     return false;
   }
-  // Prefer a station that tells us what song is on, so Lyra can know the music.
-  const candidates = [...found.slice(0, 6)].sort(() => Math.random() - 0.5);
-  const titles = await Promise.all(candidates.map((s) => nowPlayingTitle(s.url_resolved, 4000)));
-  const withTitle = candidates.findIndex((_, i) => titles[i]);
-  const pick = withTitle >= 0 ? withTitle : 0;
+  // Only stations that actually play on our page (some refuse other websites), preferring ones that say what song is on.
+  const candidates = [...found.slice(0, 8)].sort(() => Math.random() - 0.5);
+  const [titles, playable] = await Promise.all([
+    Promise.all(candidates.map((s) => nowPlayingTitle(s.url_resolved, 4000))),
+    Promise.all(candidates.map((s) => playableFrom(s.url_resolved, SITE_ORIGIN))),
+  ]);
+  const ok = (i) => playable[i];
+  let pick = candidates.findIndex((_, i) => ok(i) && titles[i]);
+  if (pick < 0) pick = candidates.findIndex((_, i) => ok(i));
+  if (pick < 0) {
+    console.log(`[radio] none of the "${words}" stations play on this site`);
+    return false;
+  }
   station = candidates[pick];
   stationSince = Date.now();
   recentSongs = [];
