@@ -22,6 +22,7 @@ import { connectTikTok } from "./tiktok.js";
 import { loadChannelSongs } from "./channel.js";
 import { noteVisit, aboutViewers, rememberFrom, saveFact } from "./memory.js";
 import { createRecorder } from "./recorder.js";
+import { findSong } from "./requests.js";
 import { newsBlock } from "./news.js";
 
 // "Viewer messages: ..." plus what Lyra remembers about those people.
@@ -128,6 +129,50 @@ async function loadChannel() {
 let trackStartedAt = 0;
 let queued = null; // the song Lyra chose to play next ([[play next: title]])
 
+// ---------- Song requests: viewers ask, Lyra decides, YouTube plays it (after the current song) ----------
+const MAX_REQUESTS_WAITING = 5;
+const MAX_REQUESTS_PER_HOUR = Number(process.env.MAX_REQUESTS_PER_HOUR || 15); // each search costs ~101 YouTube quota units
+const requests = [];      // [{ videoId, title, channel, seconds, by, since }]
+let requestTimes = [];
+let requestNotes = [];    // what happened to requests, for her next cue
+
+async function addRequest(words, by) {
+  requestTimes = requestTimes.filter((t) => Date.now() - t < 3600_000);
+  if (requests.length >= MAX_REQUESTS_WAITING) return requestNotes.push(`The request list is full (${MAX_REQUESTS_WAITING} waiting), so "${words}" wasn't added.`);
+  if (requestTimes.length >= MAX_REQUESTS_PER_HOUR) return requestNotes.push(`You've taken all the requests you can this hour, so "${words}" wasn't added.`);
+  requestTimes.push(Date.now());
+  try {
+    const song = await findSong(words);
+    if (!song) return requestNotes.push(`You couldn't find "${words}" on YouTube (or it can't be played on the site).`);
+    requests.push({ ...song, by: by || "a listener", since: Date.now() });
+    console.log(`[request] ${song.title} (for ${by || "a listener"})`);
+    requestNotes.push(`Found "${song.title}" for ${by || "a listener"}; it plays after the current song.`);
+  } catch (err) {
+    console.error(`[request] ${err.message}`);
+    requestNotes.push(`The song search isn't working right now, so "${words}" wasn't added.`);
+  }
+}
+const takeRequestNotes = () => { const n = requestNotes.splice(0); return n.length ? `\nAbout song requests: ${n.join(" ")}` : ""; };
+const requestHelp = () => ` Song requests are part of the job: if a viewer asks for a specific song (any artist), say yes and queue it ` +
+  `by ending your reply with [[request: artist - title | viewer name]], unless it's explicit or cruel. A request doesn't change the station ` +
+  `or the mood rules; it simply plays after the current song.${requests.length ? ` Requests waiting: ${requests.map((r) => `"${r.title}" for ${r.by}`).join(", ")}.` : ""}`;
+
+// Stations: a request starts when the station's song changes (a natural gap), or after 5 minutes at most.
+async function startRequest() {
+  if (!requests.length || track || mode !== "radio" || !live) return false;
+  const req = requests.shift();
+  if (listening() && !busy) {
+    busy = true;
+    await talk(`A viewer request starts the moment you stop talking: "${req.title}" (from ${req.channel}), requested by ${req.by}. ` +
+      `Introduce it now, in one or two sentences, as the next thing we hear.`);
+  }
+  playTrack(req);
+  return true;
+}
+setInterval(() => {
+  if (source === "stations" && requests.length && Date.now() - requests[0].since > 5 * 60_000) startRequest();
+}, 15_000);
+
 function nextChannelTrack() {
   if (queued) { const q = queued; queued = null; trackDeck = trackDeck.filter((s) => s !== q); return q; }
   if (!trackDeck.length) trackDeck = [...channel.songs].sort(() => Math.random() - 0.5).filter((s) => s.videoId !== track?.videoId);
@@ -194,20 +239,28 @@ async function setSource(s, by = "button") {
   } else await tuneTo(START_STATION);
 }
 
-// The page says his song finished: maybe a short DJ break, then the next one.
+// A song finished (his, or a viewer's request): maybe a short DJ break, then the next one.
 async function channelTrackEnded(videoId, failed = false) {
-  if (source !== "channel" || !track || videoId !== track.videoId) return;
+  if (!track || videoId !== track.videoId) return;
   if (mode === "radio" && pendingPodcast) { track = null; startPendingPodcast(); return; } // the song's over: bring the guest in
   const finished = track;
-  const next = nextChannelTrack();
+  const by = (s) => (s.by ? `requested by ${s.by}` : `by ${channel?.name}`);
+  // stations: after a request, back to the radio (or the next request)
+  if (source === "stations") {
+    track = null;
+    if (requests.length && await startRequest()) return;
+    if (station) { broadcast(stationEvent()); setNowPlaying(await nowPlayingTitle(station.url_resolved)); }
+    return;
+  }
+  const next = requests.shift() || nextChannelTrack(); // requests jump the queue
   track = null; // so a second "ended" for the same song is ignored
   const quietFor = (Date.now() - lastTalk) / 60_000;
-  if (!failed && live && listening() && mode === "radio" && !busy && (inbox.length || quietFor >= DJ_BREAK_MIN)) {
+  if (!failed && live && listening() && mode === "radio" && !busy && (inbox.length || next.by || quietFor >= DJ_BREAK_MIN)) {
     busy = true;
     const messages = inbox.splice(0, MAX_MESSAGES_PER_TALK);
     const msgs = viewerBlock(messages);
-    await talk(`DJ break between songs. "${finished.title}" by ${channel.name} just finished. Up next is "${next.title}". ` +
-      `Keep it short and end by introducing the next song.${msgs}`);
+    await talk(`DJ break between songs. "${finished.title}" (${by(finished)}) just finished. Up next is "${next.title}" (${by(next)}). ` +
+      `Keep it short and end by introducing the next song.${msgs}${takeRequestNotes()}`);
   }
   playTrack(next);
 }
@@ -322,6 +375,9 @@ async function talk(cueText, { canSwitch = false } = {}) {
     // her pick for what plays next (doesn't interrupt the current song)
     const pick = source === "channel" && reply.match(/\[\[\s*play next\s*:\s*([^\]]+?)\s*\]\]/i);
     if (pick) queueSong(pick[1]);
+    // she accepted a viewer's song request: [[request: artist - title | viewer]] (searched in the background)
+    const req = reply.match(/\[\[\s*request\s*:\s*([^\]|]+?)\s*(?:\|\s*([^\]]+?)\s*)?\]\]/i);
+    if (req) addRequest(req[1], req[2]);
     if (/\[\[\s*quiet\s*\]\]/i.test(reply) && !spoken) { // her choice: let the music play
       console.log("[Lyra chose to stay quiet]");
       broadcast({ type: "idle" });
@@ -354,8 +410,14 @@ async function talk(cueText, { canSwitch = false } = {}) {
 }
 
 async function stationInfo() {
+  const into = track ? (Date.now() - trackStartedAt) / 1000 : 0;
+  // a viewer's request is playing (in either mode)
+  if (track?.by) {
+    return `Right now you're playing a viewer request: "${track.title}" (from ${track.channel}), requested by ${track.by}. ` +
+      `It's ${mmss(into)} into ${mmss(track.seconds)}. Afterwards the ${source === "channel" ? `songs by ${channel?.name}` : "radio station"} carries on.` +
+      requestHelp();
+  }
   if (source === "channel") {
-    const into = track ? (Date.now() - trackStartedAt) / 1000 : 0;
     // the previous song only matters right after it ended (that's when a host back-announces)
     const before = recentSongs.length && into < 45 ? ` It just started; before it you played "${recentSongs[0]}".` : "";
     const played = track ? ` It's ${mmss(into)} into ${mmss(track.seconds)}.` : "";
@@ -364,8 +426,8 @@ async function stationInfo() {
       `They're his songs, not yours: always credit him, never call them "my songs". ` +
       `Now playing: "${track?.title || nowPlaying}" by ${channel?.name}.${played}${before}${next} ` +
       `You choose what plays next: end your reply with [[play next: exact title]]. All ${channel?.songs.length || "his"} of his songs are available, ` +
-      `for example ${songChoices()}. Only skip the current song with [[next song]] if a viewer asks for something different. ` +
-      `In this mode you only play his songs (it keeps the stream safe), so there are no radio stations.`;
+      `for example ${songChoices()}. Only skip the current song with [[next song]] if a viewer asks for something different.` +
+      requestHelp();
   }
   if (!station) return "No station is playing.";
   if (Date.now() - nowPlayingAt > 15_000) { // refresh if our info is old
@@ -378,15 +440,17 @@ async function stationInfo() {
   const before = recentSongs.length ? ` Earlier: ${recentSongs.map((s) => `"${s}"`).join(", ")}.` : "";
   const mins = Math.round((Date.now() - stationSince) / 60_000);
   const stay = mins < 20 ? " Stay on this station unless a viewer asks for something different." : "";
-  return `You're tuned to ${describeStation(station)}, and have been for ${mins} minute${mins === 1 ? "" : "s"}.${song}${before}${stay}`;
+  return `You're tuned to ${describeStation(station)}, and have been for ${mins} minute${mins === 1 ? "" : "s"}.${song}${before}${stay}` +
+    requestHelp();
 }
 
 // Follow the music: check the song every 20 s. When a new one starts and Lyra's been quiet a while,
 // she gets a turn: say something about it, or choose to stay quiet.
 const SONG_TALK_GAP_MIN = 4;
 setInterval(async () => {
-  if (!live || mode !== "radio" || !station || source !== "stations") return;
+  if (!live || mode !== "radio" || !station || source !== "stations" || track) return; // (track = a request is playing)
   const changed = setNowPlaying(await nowPlayingTitle(station.url_resolved));
+  if (changed && requests.length && !busy) return void startRequest(); // the station's song ended: time for the request
   nowPlayingAt = Date.now();
   if (changed && pendingPodcast && !busy) return void startPendingPodcast(); // the song she was waiting out has ended
   if (!changed || busy || !clients.size || (Date.now() - lastTalk) / 60_000 < SONG_TALK_GAP_MIN) return;
@@ -472,8 +536,12 @@ function setMode(m, { by = "button", guest: startGuest } = {}) {
     runPodcast(startGuest);
   } else {
     lastTalk = Date.now(); // let the music play before she talks again
-    if (source === "channel" && channel) playTrack(nextChannelTrack()); // back from the podcast: a fresh song
-    else if (!station) tuneTo(START_STATION);
+    if (source === "channel" && channel) playTrack(requests.shift() || nextChannelTrack()); // back from the podcast: a fresh song
+    else {
+      track = null; // a request that was cut off by the podcast is over
+      if (!station) tuneTo(START_STATION);
+      else { broadcast(stationEvent()); setNowPlaying(""); } // the station's song title comes back on the next check
+    }
   }
 }
 
@@ -661,7 +729,7 @@ setInterval(async () => {
     `Queue it with [[play next: ${named[0].title}]] (or skip to it now with [[next song]] if they want it right away).`;
   // she may change station / skip a song only if a viewer asked for different music (or, on a station, after a long while)
   const canSwitch = askedForMusic(messages) || (source === "stations" && stationMinutes() >= STAY_MIN);
-  await talk(`Talk break. ${await stationInfo()}${patchNote()}${msgs}`, { canSwitch });
+  await talk(`Talk break. ${await stationInfo()}${patchNote()}${msgs}${takeRequestNotes()}`, { canSwitch });
 }, 2000);
 
 // ---------- HTTP ----------

@@ -662,6 +662,12 @@ function showSongMedia({ videoId, art, own, elapsed }) {
   for (const id of ["art", "artBlur"]) art ? $(id).setAttribute("src", art) : $(id).removeAttribute("src");
   if (videoId && (videoId !== currentVideo || Boolean(own) !== ownMusic)) playVideo(videoId, Boolean(own));
   else if (!videoId) stopVideo();
+  // a song that plays WITH sound (his song, or a viewer's request) replaces the radio station; when it's over, the station returns
+  if (own) station.pause();
+  else if (source === "stations" && ctx && mode === "radio" && station.paused && station.dataset.pending) {
+    station.src = station.dataset.pending;
+    station.play().catch(() => {});
+  }
   document.body.classList.toggle("has-video", Boolean(videoId));
   hasSongMedia = Boolean(videoId || art);
   updateStreaming();
@@ -706,7 +712,7 @@ function applyMode(m) {
   $("msg").placeholder = m === "podcast" ? "Say something to Lyra and Nova…" : "Say something to Lyra…";
   updateStreaming();
   if (m === "podcast") { station.pause(); ytPlayer?.pauseVideo?.(); } // the podcast has no music underneath
-  else if (source === "channel") { if (currentVideo) ytPlayer?.playVideo?.(); }
+  else if (source === "channel" || ownMusic) { if (currentVideo) ytPlayer?.playVideo?.(); } // his song or a request
   else {
     if (ctx && station.dataset.pending) { station.src = station.dataset.pending; station.play().catch(() => {}); }
     if (currentVideo) ytPlayer?.playVideo?.();
