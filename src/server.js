@@ -256,9 +256,11 @@ async function tuneTo(words) {
 
 // How long a voice clip lasts (ffprobe), so the server can time speech itself.
 function audioSeconds(file) {
+  // Backup if ffprobe isn't installed: Fish voice clips are 128 kbps MP3, so the file size gives the length.
+  const fromSize = () => { try { return (fs.statSync(file).size * 8) / 128_000; } catch { return 0; } };
   return new Promise((resolve) => {
     execFile("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { timeout: 5000 },
-      (err, out) => resolve(err ? 0 : Number(out) || 0));
+      (err, out) => resolve((!err && Number(out)) || fromSize()));
   });
 }
 // Resolves when a clip has finished playing. Locally: when the page says so. In public mode: after its length
