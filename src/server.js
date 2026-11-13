@@ -23,6 +23,7 @@ import { loadChannelSongs } from "./channel.js";
 import { noteVisit, aboutViewers, rememberFrom, saveFact } from "./memory.js";
 import { createRecorder } from "./recorder.js";
 import { findSong } from "./requests.js";
+import { claimName, nameForToken } from "./users.js";
 import { newsBlock } from "./news.js";
 
 // "Viewer messages: ..." plus what Lyra remembers about those people.
@@ -765,7 +766,8 @@ function readBody(req) {
 }
 
 const clean = (s, max) => String(s ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, max);
-const chatSeen = new Map(); // visitor IP -> time of their last message
+const chatSeen = new Map();      // username / IP -> time of their last message
+const registerTries = new Map(); // IP -> times they claimed a new username (max 5 an hour)
 
 // Every chat message (the page's own chat, or YouTube live chat) lands here.
 function addChat({ from, text, source = "page" }) {
@@ -861,7 +863,7 @@ const server = http.createServer(async (req, res) => {
   };
 
   // Public mode: visitors may watch, chat and press Listen. Every other action needs the admin key.
-  const VISITOR_OK = ["/api/chat", "/api/start", "/api/spoken", "/api/track-ended", "/api/station-failed"];
+  const VISITOR_OK = ["/api/chat", "/api/start", "/api/spoken", "/api/track-ended", "/api/station-failed", "/api/register", "/api/me"];
   if (req.method === "POST" && url.pathname.startsWith("/api/") && !VISITOR_OK.includes(url.pathname) && !isAdmin(req, url)) {
     return send(403, "admin only");
   }
@@ -898,16 +900,41 @@ const server = http.createServer(async (req, res) => {
     return send(204);
   }
 
+  const ipOf = () => String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+
+  // Visitors claim a username once (public site). Returns a private token that proves the name is theirs.
+  if (req.method === "POST" && url.pathname === "/api/register") {
+    const ip = ipOf();
+    const tries = (registerTries.get(ip) || []).filter((t) => Date.now() - t < 3600_000);
+    if (tries.length >= 5) return send(429, "Too many new usernames from here. Try again later.");
+    const { name } = await readBody(req);
+    const r = claimName(name);
+    if (r.error) return send(400, r.error);
+    registerTries.set(ip, [...tries, Date.now()]);
+    if (registerTries.size > 5000) registerTries.clear();
+    console.log(`[users] new username: ${r.name}`);
+    return send(200, JSON.stringify(r), "application/json");
+  }
+  // Which username is this browser? (to restore "chatting as …")
+  if (req.method === "POST" && url.pathname === "/api/me") {
+    const name = nameForToken(req.headers["x-user-token"]);
+    return name ? send(200, JSON.stringify({ name }), "application/json") : send(404, "no username");
+  }
+
   if (req.method === "POST" && url.pathname === "/api/chat") {
     const { from, text } = await readBody(req);
     if (PUBLIC && !isAdmin(req, url)) {
-      // visitors: one message every few seconds, shorter messages, and no pretending to be the cast
-      const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-      if (Date.now() - (chatSeen.get(ip) || 0) < CHAT_GAP_SEC * 1000) return send(429, "slow down a little");
-      if (RESERVED_NAMES.test(String(from || "").trim())) return send(400, "please pick another name");
+      // visitors chat only as their own claimed username (the token proves it), one message every few seconds
+      const name = nameForToken(req.headers["x-user-token"]);
+      if (!name) return send(401, "Pick a username first.");
+      const ip = ipOf();
+      if (Date.now() - (chatSeen.get(name) || 0) < CHAT_GAP_SEC * 1000 || Date.now() - (chatSeen.get(ip) || 0) < 2000) {
+        return send(429, "slow down a little");
+      }
+      chatSeen.set(name, Date.now());
       chatSeen.set(ip, Date.now());
       if (chatSeen.size > 5000) chatSeen.clear();
-      return addChat({ from: clean(from, 24), text: clean(text, 200) }) ? send(204) : send(400, "empty message");
+      return addChat({ from: name, text: clean(text, 200) }) ? send(204) : send(400, "empty message");
     }
     return addChat({ from, text }) ? send(204) : send(400, "empty message");
   }

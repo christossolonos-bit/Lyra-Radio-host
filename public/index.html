@@ -177,6 +177,13 @@
   .popout[hidden] { display: none; }
   /* Visitors on the public site: listen and chat only (your controls need the admin key) */
   body.visitor :is(.modes, .sources, .popout, .link-form, .link-state, .keys) { display: none; }
+  body.visitor #name { display: none; } /* visitors chat as their claimed username */
+  form[hidden], .me[hidden] { display: none; }
+  .user-form { flex-direction: row; gap: 8px; }
+  .user-form button { font: inherit; font-size: 13px; border-radius: 8px; border: 0; background: var(--cyan); color: #001418;
+    padding: 0 14px; cursor: pointer; font-weight: 600; flex: none; }
+  .me { padding: 8px 14px 0; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
+  .me b { color: var(--cyan); font-weight: 600; }
   body.vertical .popout, body.silent .popout, body.silent .vol { display: none; }
   .ep { display: inline-block; width: fit-content; font-size: 11px; letter-spacing: .12em; color: #001418; background: #ffd27a;
     border-radius: 4px; padding: 2px 8px; font-weight: 700; text-transform: uppercase; }
@@ -330,6 +337,12 @@
       </form>
       <div class="link-state" id="linkState">Only this page's chat</div>
       <div class="log" id="log"></div>
+      <!-- public site: visitors claim a username once, then chat only as that name -->
+      <form id="userForm" class="user-form" hidden>
+        <input id="userName" placeholder="Pick a username" maxlength="20" autocomplete="off">
+        <button type="submit">Join chat</button>
+      </form>
+      <div class="me" id="me" hidden></div>
       <form id="chatForm">
         <div class="row">
           <input id="name" placeholder="Name" maxlength="30" autocomplete="off">
@@ -566,6 +579,7 @@ events.onmessage = (e) => {
       document.body.classList.add("visitor");
       $("goLive").textContent = "LISTEN";
       document.querySelector("#start p").textContent = "Live radio and podcast from Death Valley";
+      setupVisitorChat();
     }
   }
   if (ev.type === "mode") applyMode(ev.mode);
@@ -752,6 +766,44 @@ $("chatForm").onsubmit = (e) => {
   $("msg").value = "";
 };
 $("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") $("chatForm").requestSubmit(); });
+// ---------- Visitor usernames (public site) ----------
+// A visitor claims a username once; the server gives this browser a private token, and their messages always use that name.
+let userToken = (() => { try { return localStorage.getItem("lyra-user-token") || ""; } catch { return ""; } })();
+let visitorChatReady = false;
+function showChatAs(name) {
+  $("me").innerHTML = `Chatting as <b>@${escapeHtml(name)}</b>`;
+  $("me").hidden = false;
+  $("userForm").hidden = true;
+  $("chatForm").hidden = false;
+}
+function askForUsername(note) {
+  $("userForm").hidden = false;
+  $("chatForm").hidden = true;
+  $("me").hidden = true;
+  if (note) addLog("", note, "sys");
+}
+async function setupVisitorChat() {
+  if (visitorChatReady) return;
+  visitorChatReady = true;
+  if (!userToken) return askForUsername();
+  const r = await fetch("/api/me", { method: "POST", headers: { "X-User-Token": userToken } }).catch(() => null);
+  if (r?.ok) return showChatAs((await r.json()).name);
+  if (r) { userToken = ""; localStorageSet("lyra-user-token", ""); }
+  askForUsername();
+}
+$("userForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const r = await fetch("/api/register", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: $("userName").value.trim() }) }).catch(() => null);
+  if (!r) return addLog("", "Couldn't reach the show. Try again in a moment.", "sys");
+  if (!r.ok) return addLog("", await r.text(), "sys");
+  const { name, token } = await r.json();
+  userToken = token;
+  localStorageSet("lyra-user-token", token);
+  showChatAs(name);
+  $("msg").focus();
+};
+
 // ---------- Live chats Lyra reads (YouTube / TikTok) ----------
 const links = { youtube: null, tiktok: null };
 function showLink(ev) {
@@ -803,9 +855,11 @@ function addLog(who, text, cls = "", color = "") {
 function post(url, body) {
   // the silent view only watches: it never drives the show (start, finished speaking, song ended, station failed)
   if (SILENT && /\/api\/(start|spoken|track-ended|track-error|station-failed)$/.test(url)) return Promise.resolve();
-  const headers = { "Content-Type": "application/json", ...(adminKey ? { "X-Admin-Key": adminKey } : {}) };
+  const headers = { "Content-Type": "application/json", ...(adminKey ? { "X-Admin-Key": adminKey } : {}),
+    ...(userToken ? { "X-User-Token": userToken } : {}) };
   return fetch(url, { method: "POST", headers, body: JSON.stringify(body || {}) })
-    .then((r) => { if (r.status === 429 && url === "/api/chat") addLog("", "Slow down a little: one message every few seconds.", "sys");
+    .then((r) => { if (r.status === 401 && url === "/api/chat") askForUsername("Pick a username first.");
+      else if (r.status === 429 && url === "/api/chat") addLog("", "Slow down a little: one message every few seconds.", "sys");
       else if (r.status === 400 && url === "/api/chat") r.text().then((t) => addLog("", t, "sys")); return r; })
     .catch(() => {});
 }
