@@ -45,7 +45,7 @@ You need **Node.js 22+** and **FFmpeg** (`ffplay` and `ffprobe` on your PATH).
 
 Lyra can run as her own public website. Each visitor's browser plays the radio station straight from the station, the way radio directory sites do, so nothing is re-broadcast through a video platform.
 
-1. On [railway.app](https://railway.app), create a project from this GitHub repo. `railpack.json` installs ffmpeg, and it starts with `npm start` (Node 22+).
+1. On [railway.app](https://railway.app), create a project from this GitHub repo. Railway builds it with the `Dockerfile` (Node 22 and ffmpeg) and starts it with `npm start`.
 2. In the service's **Variables**, add everything from your `.env` (the NVIDIA, Fish, YouTube and channel settings), plus:
    - `ADMIN_KEY`: a long random password. Setting it turns on **public mode**.
    - `DATA_DIR=/data`, and add a **Volume** mounted at `/data`, so her memory and the podcast recordings survive redeploys.

@@ -1,0 +1,9 @@
+node_modules
+.env
+.git
+data
+recordings
+voice-refs
+voice-samples
+tools/*.jpg
+public/clips/lyra_talk.mp4
