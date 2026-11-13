@@ -49,7 +49,7 @@ You need **Node.js 22+** and **FFmpeg** (`ffplay` and `ffprobe` on your PATH).
 
 ### Going live on TikTok
 
-1. Open **http://localhost:5177/?layout=vertical** (or press `L`). It's a 9:16 broadcast view: Lyra big in the middle, the song behind her, and subtitles above TikTok's own comments. Press `H` to show the chat and controls for yourself.
+1. On the main page, click **Vertical window ↗**. It opens the 9:16 view in its own window, for radio and podcast alike: Lyra big in the middle, the song behind her, and subtitles above TikTok's own comments. Click **START VIEW** in it. It's a **silent mirror**: the main page plays the sound and runs the show, so nothing plays twice. In Streamlabs/OBS, use `http://localhost:5177/?layout=vertical&mute=1` as a second browser source (it's silent too).
 2. Capture that window with **TikTok LIVE Studio** (or OBS if your account has a stream key) and go live. Use **My music**, because TikTok also mutes copyrighted songs.
 3. Type your **@username** in the **TikTok** box on the page. Lyra reads the chat and thanks gifts and new followers (batched, so a flood of roses doesn't take over).
 

@@ -171,6 +171,11 @@
     border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
   .modes button.on { background: var(--cyan); border-color: var(--cyan); color: #001418; }
   .sources button { font-size: 10px; padding: 3px 10px; }
+  .popout { width: fit-content; font: inherit; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; padding: 3px 10px;
+    border-radius: 999px; border: 1px dashed var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+  .popout:hover { color: var(--ink); border-color: var(--cyan); }
+  .popout[hidden] { display: none; }
+  body.vertical .popout, body.silent .popout, body.silent .vol { display: none; }
   .ep { display: inline-block; width: fit-content; font-size: 11px; letter-spacing: .12em; color: #001418; background: #ffd27a;
     border-radius: 4px; padding: 2px 8px; font-weight: 700; text-transform: uppercase; }
   .ep[hidden] { display: none; }
@@ -299,6 +304,7 @@
         <button data-source="stations" class="on">Stations</button>
         <button data-source="channel">My music</button>
       </div>
+      <button class="popout" id="popVertical" title="Opens the 9:16 TikTok view in its own window (silent: this page plays the sound)">Vertical window ↗</button>
       <div class="station" id="station">Tuning in…</div>
       <div class="np" id="np" hidden></div>
       <div class="vol">
@@ -345,7 +351,17 @@
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
 // ?layout=vertical: the 9:16 TikTok layout (for TikTok LIVE Studio or OBS)
-if (new URLSearchParams(location.search).get("layout") === "vertical") document.body.classList.add("vertical");
+const params = new URLSearchParams(location.search);
+if (params.get("layout") === "vertical") document.body.classList.add("vertical");
+// ?mute=1: a SILENT mirror (the pop-out vertical window, or a second browser source in Streamlabs/OBS).
+// It shows everything but plays no sound and never reports "song ended" / "finished speaking":
+// the main page is the only sound source and the only one that drives the show.
+const SILENT = params.get("mute") === "1";
+if (SILENT) {
+  document.body.classList.add("silent");
+  document.querySelector("#start p").textContent = "Silent view: the main page plays the sound";
+  $("goLive").textContent = "START VIEW";
+}
 
 // ---------- Particles ----------
 for (let i = 0; i < 28; i++) {
@@ -369,7 +385,8 @@ let ytPlayer = null, ownMusic = false; // the YouTube player (set up further dow
 function setMusicLevel(v) {
   musicLevel = Math.max(0, Math.min(1, v));
   station.volume = musicLevel;
-  if (ownMusic && ytPlayer?.setVolume) ytPlayer.setVolume(Math.round(musicLevel * 100));
+  station.muted = SILENT;
+  if (ownMusic && !SILENT && ytPlayer?.setVolume) ytPlayer.setVolume(Math.round(musicLevel * 100));
 }
 setMusicLevel(musicVol);
 $("musicVol").value = musicVol;
@@ -381,7 +398,7 @@ $("musicVol").addEventListener("input", (e) => {
 });
 $("voiceVol").addEventListener("input", (e) => {
   voiceVol = Number(e.target.value);
-  if (voiceGain) voiceGain.gain.value = voiceVol;
+  if (voiceGain && !SILENT) voiceGain.gain.value = voiceVol;
   localStorageSet("lyra-voice-vol", voiceVol);
 });
 let stationFailTimer = null;
@@ -400,7 +417,7 @@ function setupAudio() {
   freqData = new Uint8Array(analyser.frequencyBinCount);
   // voice -> analyser (lip sync reads it here, unaffected by volume) -> volume -> speakers
   voiceGain = ctx.createGain();
-  voiceGain.gain.value = voiceVol;
+  voiceGain.gain.value = SILENT ? 0 : voiceVol; // silent view: still analysed for lip sync, just not heard
   analyser.connect(voiceGain);
   voiceGain.connect(ctx.destination);
   requestAnimationFrame(tick);
@@ -613,6 +630,7 @@ function playVideo(videoId, own) {
 const videoPlaying = () => mode === "radio";
 function applyVideoSound() {
   if (!ytPlayer?.setVolume) return;
+  if (SILENT) return ytPlayer.mute();
   if (ownMusic) { ytPlayer.unMute(); ytPlayer.setVolume(Math.round(musicLevel * 100)); }
   else ytPlayer.mute();
 }
@@ -678,6 +696,16 @@ function applyMode(m) {
   }
 }
 document.querySelectorAll("#modes button").forEach((b) => (b.onclick = () => post("/api/mode", { mode: b.dataset.mode })));
+
+// ---------- Pop-out vertical window (9:16, silent) ----------
+let verticalWin = null;
+// Inside OBS / Streamlabs a pop-up would replace this source instead of opening a window, so hide the button there:
+// use a second browser source with ?layout=vertical&mute=1 instead.
+if (window.obsstudio) $("popVertical").hidden = true;
+$("popVertical").onclick = () => {
+  if (verticalWin && !verticalWin.closed) return verticalWin.focus();
+  verticalWin = window.open("/?layout=vertical&mute=1", "lyra-vertical", "popup,width=540,height=960");
+};
 
 // ---------- UI ----------
 $("goLive").onclick = async () => {
@@ -750,6 +778,8 @@ function addLog(who, text, cls = "", color = "") {
   $("log").scrollTop = $("log").scrollHeight;
 }
 function post(url, body) {
+  // the silent view only watches: it never drives the show (start, finished speaking, song ended, station failed)
+  if (SILENT && /\/api\/(start|spoken|track-ended|track-error|station-failed)$/.test(url)) return Promise.resolve();
   return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).catch(() => {});
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }

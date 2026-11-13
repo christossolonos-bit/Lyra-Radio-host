@@ -110,13 +110,49 @@ async function loadChannel() {
   }
   return channel;
 }
+let trackStartedAt = 0;
+let queued = null; // the song Lyra chose to play next ([[play next: title]])
+
 function nextChannelTrack() {
+  if (queued) { const q = queued; queued = null; trackDeck = trackDeck.filter((s) => s !== q); return q; }
   if (!trackDeck.length) trackDeck = [...channel.songs].sort(() => Math.random() - 0.5).filter((s) => s.videoId !== track?.videoId);
   return trackDeck.pop();
 }
 function playTrack(t) {
   track = t;
+  trackStartedAt = Date.now();
   setNowPlaying(t.title, { videoId: t.videoId, own: true });
+}
+const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+// Lyra picks what plays next: match her words to one of his song titles.
+function queueSong(words) {
+  const w = words.toLowerCase().replace(/["“”]/g, "").trim();
+  const song = channel?.songs.find((s) => s.title.toLowerCase() === w) ||
+    channel?.songs.find((s) => s.title.toLowerCase().includes(w) || w.includes(s.title.toLowerCase()));
+  if (song && song.videoId !== track?.videoId) {
+    queued = song;
+    console.log(`[music] Lyra queued: ${song.title}`);
+  }
+  return song;
+}
+
+// A few of his songs she could pick next (changes every time, so she gets to know the catalogue).
+function songChoices(n = 8) {
+  return [...(channel?.songs || [])].filter((s) => s.videoId !== track?.videoId)
+    .sort(() => Math.random() - 0.5).slice(0, n).map((s) => `"${s.title}"`).join(", ");
+}
+
+// Did a viewer actually ask to change the music? Only then may she skip a song (or change station) straight away.
+const MUSIC_REQUEST = /\b(skip|next song|another song|different|change (the )?(song|music|station)|switch|put on|play (some|something|me|a|another|[a-z]+ music)|station|don'?t like|something else|more (upbeat|energy|chill|calm)|faster|slower|too slow|too fast)\b/i;
+const askedForMusic = (messages) => messages.some((m) => MUSIC_REQUEST.test(m.text) || songsNamed([m]).length);
+
+// Songs of his that viewers named in their messages (so she knows a request is available, even if it's not in her list).
+const norm = (s) => s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+function songsNamed(messages) {
+  if (source !== "channel" || !channel) return [];
+  const text = norm(messages.map((m) => m.text).join(" "));
+  return channel.songs.filter((s) => norm(s.title).length >= 4 && text.includes(norm(s.title)));
 }
 const sourceEvent = () => ({ type: "source", source, channel: channel?.name || "", available: Boolean(MUSIC_CHANNEL) });
 
@@ -204,7 +240,12 @@ async function tuneTo(words) {
 const stationMinutes = () => (Date.now() - stationSince) / 60_000;
 const STAY_MIN = 20;
 
-// opts.canSwitch: may she change station this time? (a viewer wrote in, or she's been on it a while)
+// Drop the sentences where she says she's switching/skipping (when we don't let her), so words match what plays.
+const dropSwitchTalk = (text) => text.split(/(?<=[.!?])\s+/)
+  .filter((s) => !/\b(switch|switching|skip|skipping|put(ting)? on|chang(e|ing)|tun(e|ing)|flip(ping)?|cut (it|this))\b/i.test(s))
+  .join(" ").trim() || text;
+
+// opts.canSwitch: may she change station / skip the song right now? (a viewer asked, or she's been on a station a while)
 async function talk(cueText, { canSwitch = false } = {}) {
   busy = true;
   broadcast({ type: "thinking" });
@@ -212,13 +253,16 @@ async function talk(cueText, { canSwitch = false } = {}) {
     const reply = await lyra.cue(cueText);
     rememberFrom(reply); // [[remember: Name | fact]]
     let { spoken, station: wanted } = splitStationTag(reply); // strips every [[...]] tag from what she says
-    if (wanted && !canSwitch) { // too soon and nobody asked: keep the station, and drop her "I'm switching" line
-      console.log(`[radio] kept the station (she wanted "${wanted}", but nobody asked and it's only been ${Math.round(stationMinutes())} min)`);
+    let skip = source === "channel" && /\[\[\s*next song\s*\]\]/i.test(reply);
+    if ((wanted || skip) && !canSwitch) { // nobody asked: keep the music going, and drop her "I'm switching" line
+      console.log(`[radio] kept the ${skip ? "song" : `station (she wanted "${wanted}")`}: nobody asked for a change`);
       wanted = null;
-      spoken = spoken.split(/(?<=[.!?])\s+/)
-        .filter((s) => !/\b(switch|switching|put(ting)? on|chang(e|ing)|tun(e|ing)|flip(ping)?)\b/i.test(s))
-        .join(" ").trim() || spoken;
+      skip = false;
+      spoken = dropSwitchTalk(spoken);
     }
+    // her pick for what plays next (doesn't interrupt the current song)
+    const pick = source === "channel" && reply.match(/\[\[\s*play next\s*:\s*([^\]]+?)\s*\]\]/i);
+    if (pick) queueSong(pick[1]);
     if (/\[\[\s*quiet\s*\]\]/i.test(reply) && !spoken) { // her choice: let the music play
       console.log("[Lyra chose to stay quiet]");
       broadcast({ type: "idle" });
@@ -241,7 +285,7 @@ async function talk(cueText, { canSwitch = false } = {}) {
     setTimeout(() => fs.rmSync(file, { force: true }), 60_000);
 
     if (invited) setMode("podcast", { by: "Lyra", guest: invited }); // starts once this talk has finished
-    else if (source === "channel" && /\[\[\s*next song\s*\]\]/i.test(reply)) playTrack(nextChannelTrack());
+    else if (skip) playTrack(nextChannelTrack()); // a viewer asked: skip now (to her pick, if she made one)
     else if (wanted && source === "stations") await tuneTo(wanted); // no outside stations in YouTube-safe mode
   } catch (err) {
     console.error(`[talk skipped] ${err.status ? `${err.status} ` : ""}${err.message}`);
@@ -255,11 +299,17 @@ async function talk(cueText, { canSwitch = false } = {}) {
 
 async function stationInfo() {
   if (source === "channel") {
-    const before = recentSongs.length ? ` Earlier: ${recentSongs.map((s) => `"${s}"`).join(", ")}.` : "";
-    return `You're playing ${channel?.name || "the artist"}'s own songs from his YouTube music channel. ` +
-      `Now playing: "${track?.title || nowPlaying}" by ${channel?.name}.${before} In this mode you only play his songs ` +
-      `(it keeps the stream safe), so you can't switch to radio stations; if someone wants something else, ` +
-      `you can skip to another of his songs by ending your reply with [[next song]].`;
+    const into = track ? (Date.now() - trackStartedAt) / 1000 : 0;
+    // the previous song only matters right after it ended (that's when a host back-announces)
+    const before = recentSongs.length && into < 45 ? ` It just started; before it you played "${recentSongs[0]}".` : "";
+    const played = track ? ` It's ${mmss(into)} into ${mmss(track.seconds)}.` : "";
+    const next = queued ? ` Up next (your pick): "${queued.title}".` : "";
+    return `You're playing songs by ${channel?.name || "the artist"}, from his YouTube music channel. ` +
+      `They're his songs, not yours: always credit him, never call them "my songs". ` +
+      `Now playing: "${track?.title || nowPlaying}" by ${channel?.name}.${played}${before}${next} ` +
+      `You choose what plays next: end your reply with [[play next: exact title]]. All ${channel?.songs.length || "his"} of his songs are available, ` +
+      `for example ${songChoices()}. Only skip the current song with [[next song]] if a viewer asks for something different. ` +
+      `In this mode you only play his songs (it keeps the stream safe), so there are no radio stations.`;
   }
   if (!station) return "No station is playing.";
   if (Date.now() - nowPlayingAt > 15_000) { // refresh if our info is old
@@ -523,7 +573,13 @@ setInterval(async () => {
   let msgs = viewerBlock(messages) || " Nobody has written in. Say something short over the music.";
   // someone asked about the news: give her real headlines for this answer
   if (messages.some((m) => /\bnews\b|headlines|what'?s happening/i.test(m.text))) msgs += `\n${await newsBlock().catch(() => "")}`;
-  await talk(`Talk break. ${await stationInfo()}${patchNote()}${msgs}`, { canSwitch: messages.length > 0 || stationMinutes() >= STAY_MIN });
+  // a viewer named one of his songs: tell her it's available
+  const named = songsNamed(messages);
+  if (named.length) msgs += `\nSong request: ${named.map((s) => `"${s.title}"`).join(", ")} ${named.length > 1 ? "are" : "is"} one of his songs and available. ` +
+    `Queue it with [[play next: ${named[0].title}]] (or skip to it now with [[next song]] if they want it right away).`;
+  // she may change station / skip a song only if a viewer asked for different music (or, on a station, after a long while)
+  const canSwitch = askedForMusic(messages) || (source === "stations" && stationMinutes() >= STAY_MIN);
+  await talk(`Talk break. ${await stationInfo()}${patchNote()}${msgs}`, { canSwitch });
 }, 2000);
 
 // ---------- HTTP ----------
