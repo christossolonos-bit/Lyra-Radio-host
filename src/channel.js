@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const API = "https://www.googleapis.com/youtube/v3";
 const here = path.dirname(fileURLToPath(import.meta.url));
-const CACHE_DIR = path.join(here, "..", "data");
+const CACHE_DIR = process.env.DATA_DIR || path.join(here, "..", "data"); // DATA_DIR = a Railway volume
 const CACHE_HOURS = 24;
 
 async function get(p, params) {

@@ -10,6 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createLyra, MODEL, episodeNews } from "./lyra.js";
 import { synthesize, VOICE_ID } from "./voice.js";
@@ -37,6 +38,18 @@ const AUDIO_DIR = path.join(os.tmpdir(), "lyra-live-audio");
 fs.mkdirSync(AUDIO_DIR, { recursive: true });
 
 const PORT = Number(process.env.PORT || 5177);
+
+// ---------- Public website mode (e.g. on Railway) ----------
+// With ADMIN_KEY set, visitors can only listen and chat; every control needs the key
+// (open the site once with ?admin=YOUR_KEY and the browser remembers it).
+// The server keeps time itself (speech, songs) instead of trusting visitors' browsers.
+const ADMIN_KEY = process.env.ADMIN_KEY || "";
+const PUBLIC = Boolean(ADMIN_KEY);
+const HOST = process.env.HOST || (PUBLIC || process.env.RAILWAY_ENVIRONMENT ? "0.0.0.0" : "127.0.0.1");
+const isAdmin = (req, url) => !PUBLIC || req.headers["x-admin-key"] === ADMIN_KEY || url.searchParams.get("key") === ADMIN_KEY;
+const MAX_TALKS_PER_HOUR = Number(process.env.MAX_TALKS_PER_HOUR || 120); // a cap on voice costs if chat gets busy
+const CHAT_GAP_SEC = 6;   // one message per visitor every 6 seconds
+const RESERVED_NAMES = /^(lyra|nova|marcus|juno|solo|patch|tiktok|youtube|admin|system|moderator)$/i;
 const SHOW_NAME = process.env.RADIO_SHOW_NAME || "Lyra Radio";
 const START_STATION = process.env.RADIO_STATION || "chillout";
 const TALK_EVERY_MIN = Number(process.env.RADIO_TALK_EVERY_MIN || 8);
@@ -118,11 +131,16 @@ function nextChannelTrack() {
   if (!trackDeck.length) trackDeck = [...channel.songs].sort(() => Math.random() - 0.5).filter((s) => s.videoId !== track?.videoId);
   return trackDeck.pop();
 }
+// The server's song clock: each of his songs ends after its known length, whatever visitors' players do.
+let trackTimer = null;
 function playTrack(t) {
   track = t;
   trackStartedAt = Date.now();
-  setNowPlaying(t.title, { videoId: t.videoId, own: true });
+  setNowPlaying(t.title, { videoId: t.videoId, own: true, elapsed: 0 });
+  clearTimeout(trackTimer);
+  trackTimer = setTimeout(() => channelTrackEnded(t.videoId), (t.seconds + 2) * 1000);
 }
+function stopTrackClock() { clearTimeout(trackTimer); }
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 // Lyra picks what plays next: match her words to one of his song titles.
@@ -177,11 +195,12 @@ async function setSource(s, by = "button") {
 // The page says his song finished: maybe a short DJ break, then the next one.
 async function channelTrackEnded(videoId, failed = false) {
   if (source !== "channel" || !track || videoId !== track.videoId) return;
+  if (mode === "radio" && pendingPodcast) { track = null; startPendingPodcast(); return; } // the song's over: bring the guest in
   const finished = track;
   const next = nextChannelTrack();
   track = null; // so a second "ended" for the same song is ignored
   const quietFor = (Date.now() - lastTalk) / 60_000;
-  if (!failed && live && mode === "radio" && !busy && (inbox.length || quietFor >= DJ_BREAK_MIN)) {
+  if (!failed && live && listening() && mode === "radio" && !busy && (inbox.length || quietFor >= DJ_BREAK_MIN)) {
     busy = true;
     const messages = inbox.splice(0, MAX_MESSAGES_PER_TALK);
     const msgs = viewerBlock(messages);
@@ -235,6 +254,23 @@ async function tuneTo(words) {
   return true;
 }
 
+// How long a voice clip lasts (ffprobe), so the server can time speech itself.
+function audioSeconds(file) {
+  return new Promise((resolve) => {
+    execFile("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { timeout: 5000 },
+      (err, out) => resolve(err ? 0 : Number(out) || 0));
+  });
+}
+// Resolves when a clip has finished playing. Locally: when the page says so. In public mode: after its length
+// (plus a moment for visitors' browsers to load it), so no visitor can cut her off or stall the show.
+async function speechDone(file) {
+  const secs = PUBLIC ? await audioSeconds(file) : 0;
+  return new Promise((resolve) => {
+    finishSpeaking = PUBLIC ? null : resolve;
+    setTimeout(resolve, PUBLIC && secs ? (secs + 1.2) * 1000 : 90_000);
+  }).finally(() => { finishSpeaking = null; });
+}
+
 // One talk: ONE model request + ONE TTS request, then wait for the page to finish playing it.
 // How long we've been on the current station. Under 20 minutes she only switches if a viewer asked.
 const stationMinutes = () => (Date.now() - stationSince) / 60_000;
@@ -245,8 +281,19 @@ const dropSwitchTalk = (text) => text.split(/(?<=[.!?])\s+/)
   .filter((s) => !/\b(switch|switching|skip|skipping|put(ting)? on|chang(e|ing)|tun(e|ing)|flip(ping)?|cut (it|this))\b/i.test(s))
   .join(" ").trim() || text;
 
+// A cap on how often she speaks per hour (talk breaks + podcast segments), so a busy public chat can't run up voice costs.
+let talkTimes = [];
+function overTalkLimit() {
+  talkTimes = talkTimes.filter((t) => Date.now() - t < 3600_000);
+  if (talkTimes.length >= MAX_TALKS_PER_HOUR) return true;
+  talkTimes.push(Date.now());
+  return false;
+}
+const listening = () => clients.size > 0; // nobody on the page = she stays quiet (costs nothing)
+
 // opts.canSwitch: may she change station / skip the song right now? (a viewer asked, or she's been on a station a while)
 async function talk(cueText, { canSwitch = false } = {}) {
+  if (overTalkLimit()) { console.log("[limit] talk cap for this hour reached; staying quiet"); busy = false; return; }
   busy = true;
   broadcast({ type: "thinking" });
   try {
@@ -276,15 +323,12 @@ async function talk(cueText, { canSwitch = false } = {}) {
     await synthesize(spoken, file);
     console.log(`Lyra: ${spoken}`);
 
-    const done = new Promise((resolve) => {
-      finishSpeaking = resolve;
-      setTimeout(resolve, 90_000); // never get stuck if no page reports back
-    });
+    const done = speechDone(file);
     broadcast({ type: "say", who: "Lyra", text: spoken, audio: `/audio/${id}.mp3` });
     await done;
     setTimeout(() => fs.rmSync(file, { force: true }), 60_000);
 
-    if (invited) setMode("podcast", { by: "Lyra", guest: invited }); // starts once this talk has finished
+    if (invited) requestPodcast(invited); // waits for the current song to finish
     else if (skip) playTrack(nextChannelTrack()); // a viewer asked: skip now (to her pick, if she made one)
     else if (wanted && source === "stations") await tuneTo(wanted); // no outside stations in YouTube-safe mode
   } catch (err) {
@@ -332,7 +376,8 @@ setInterval(async () => {
   if (!live || mode !== "radio" || !station || source !== "stations") return;
   const changed = setNowPlaying(await nowPlayingTitle(station.url_resolved));
   nowPlayingAt = Date.now();
-  if (!changed || busy || (Date.now() - lastTalk) / 60_000 < SONG_TALK_GAP_MIN) return;
+  if (changed && pendingPodcast && !busy) return void startPendingPodcast(); // the song she was waiting out has ended
+  if (!changed || busy || !clients.size || (Date.now() - lastTalk) / 60_000 < SONG_TALK_GAP_MIN) return;
   busy = true;
   await talk(`A new song just started. ${await stationInfo()} ` +
     `You can say something short about it (the artist, the sound, what it makes you think of, a real fact you know), ` +
@@ -355,10 +400,7 @@ async function voiceLine(line) {
 
 async function playLine(line, file) {
   console.log(`${line.who}: ${line.text}`);
-  const done = new Promise((resolve) => {
-    finishSpeaking = resolve;
-    setTimeout(resolve, 60_000);
-  });
+  const done = speechDone(file);
   broadcast({ type: "say", who: line.who, text: line.text, audio: `/audio/${path.basename(file)}` });
   await done;
   finishSpeaking = null;
@@ -385,16 +427,40 @@ function interruptCue({ who, topic, messages, lastSaid }) {
 }
 
 // Change between radio and podcast. Used by the page's buttons AND by Lyra's own choices.
+// Lyra chose to start the podcast. Like a real host she lets the current song finish first:
+// her own songs end on the song clock; a station's song ends when its title changes (or after 6 minutes at most).
+let pendingPodcast = null; // { guest, since }
+function requestPodcast(guestName) {
+  const songLeft = source === "channel" && track ? track.seconds - (Date.now() - trackStartedAt) / 1000 : 0;
+  const songPlaying = mode === "radio" && (songLeft > 8 || (source === "stations" && nowPlaying));
+  if (!songPlaying) return setMode("podcast", { by: "Lyra", guest: guestName });
+  pendingPodcast = { guest: guestName, since: Date.now() };
+  console.log(`[podcast] Lyra will bring ${guestName} in after this song`);
+}
+function startPendingPodcast() {
+  if (!pendingPodcast) return false;
+  const { guest: g } = pendingPodcast;
+  pendingPodcast = null;
+  setMode("podcast", { by: "Lyra", guest: g });
+  return true;
+}
+setInterval(() => { // a station song that never seems to end: don't keep the guest waiting forever
+  if (pendingPodcast && Date.now() - pendingPodcast.since > 6 * 60_000) startPendingPodcast();
+}, 15_000);
+
 function setMode(m, { by = "button", guest: startGuest } = {}) {
+  if (m === "podcast") pendingPodcast = null; // switching now anyway
   if (m === mode) return;
   mode = m;
   console.log(`[mode] ${mode} (chosen by ${by})`);
   broadcast({ type: "mode", mode });
   if (!live) return;
-  if (mode === "podcast") runPodcast(startGuest);
-  else {
+  if (mode === "podcast") {
+    stopTrackClock(); // the music pauses for the podcast
+    runPodcast(startGuest);
+  } else {
     lastTalk = Date.now(); // let the music play before she talks again
-    if (source === "channel" && channel) playTrack(track || nextChannelTrack());
+    if (source === "channel" && channel) playTrack(nextChannelTrack()); // back from the podcast: a fresh song
     else if (!station) tuneTo(START_STATION);
   }
 }
@@ -430,6 +496,10 @@ async function runPodcast(startGuest) {
     broadcast({ type: "thinking" });
     let pending = nextSegment();
     while (live && mode === "podcast") {
+      // nobody listening, or over the hourly cap: pause the conversation (no requests) until someone's back
+      while (live && mode === "podcast" && (!listening() || overTalkLimit())) await sleep(10_000);
+      if (!live || mode !== "podcast") break;
+      if (!pending) pending = nextSegment();
       const res = await pending;
       pending = null;
       const { lines, nextGuest, who, wrap } = res;
@@ -525,7 +595,7 @@ function patchNote() {
 let showStartedAt = 0;
 let lastTopOfHour = -1;
 setInterval(async () => {
-  if (!live || mode !== "radio" || busy) return;
+  if (!live || mode !== "radio" || busy || !listening()) return;
   const now = new Date();
   if (now.getMinutes() > 5 || now.getHours() === lastTopOfHour) return; // in the first five minutes of the hour
   if (Date.now() - showStartedAt < 10 * 60_000) return; // not right after the show opened
@@ -564,7 +634,7 @@ async function startShow() {
 
 // Every few seconds: talk if someone wrote in (after a short gap), or if it's been a while.
 setInterval(async () => {
-  if (!live || busy || mode !== "radio") return;
+  if (!live || busy || mode !== "radio" || !listening()) return;
   const since = (Date.now() - lastTalk) / 1000;
   const hasMail = inbox.length > 0 && since >= MIN_GAP_SEC;
   if (!hasMail && since < TALK_EVERY_MIN * 60) return;
@@ -615,6 +685,7 @@ function readBody(req) {
 }
 
 const clean = (s, max) => String(s ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, max);
+const chatSeen = new Map(); // visitor IP -> time of their last message
 
 // Every chat message (the page's own chat, or YouTube live chat) lands here.
 function addChat({ from, text, source = "page" }) {
@@ -709,15 +780,23 @@ const server = http.createServer(async (req, res) => {
     res.end(body);
   };
 
+  // Public mode: visitors may watch, chat and press Listen. Every other action needs the admin key.
+  const VISITOR_OK = ["/api/chat", "/api/start", "/api/spoken", "/api/track-ended", "/api/station-failed"];
+  if (req.method === "POST" && url.pathname.startsWith("/api/") && !VISITOR_OK.includes(url.pathname) && !isAdmin(req, url)) {
+    return send(403, "admin only");
+  }
+
   // Live updates to the page
   if (url.pathname === "/api/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     res.write(`data: ${JSON.stringify({ type: "hello", live, mode, show: SHOW_NAME, podcast: PODCAST_NAME, model: MODEL,
+      public: PUBLIC, admin: isAdmin(req, url),
       tiktokUser: ttWatch || process.env.TIKTOK_USERNAME || "",
       episode: process.env.LATEST_EPISODE || "", episodeTitle: process.env.LATEST_EPISODE_TITLE || "" })}\n\n`);
     if (station) res.write(`data: ${JSON.stringify(stationEvent())}\n\n`);
     if (nowPlaying) res.write(`data: ${JSON.stringify({ type: "nowplaying", title: nowPlaying })}\n\n`);
-    if (songVisual.title) res.write(`data: ${JSON.stringify(songVisual)}\n\n`);
+    // a late joiner starts his song at the right point, in step with everyone else
+    if (songVisual.title) res.write(`data: ${JSON.stringify({ ...songVisual, elapsed: songVisual.own ? (Date.now() - trackStartedAt) / 1000 : 0 })}\n\n`);
     res.write(`data: ${JSON.stringify(ytStatus)}\n\n`);
     res.write(`data: ${JSON.stringify(ttStatus)}\n\n`);
     res.write(`data: ${JSON.stringify(sourceEvent())}\n\n`);
@@ -741,6 +820,15 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/chat") {
     const { from, text } = await readBody(req);
+    if (PUBLIC && !isAdmin(req, url)) {
+      // visitors: one message every few seconds, shorter messages, and no pretending to be the cast
+      const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+      if (Date.now() - (chatSeen.get(ip) || 0) < CHAT_GAP_SEC * 1000) return send(429, "slow down a little");
+      if (RESERVED_NAMES.test(String(from || "").trim())) return send(400, "please pick another name");
+      chatSeen.set(ip, Date.now());
+      if (chatSeen.size > 5000) chatSeen.clear();
+      return addChat({ from: clean(from, 24), text: clean(text, 200) }) ? send(204) : send(400, "empty message");
+    }
     return addChat({ from, text }) ? send(204) : send(400, "empty message");
   }
 
@@ -760,6 +848,7 @@ const server = http.createServer(async (req, res) => {
   // The page finished (or couldn't play) one of his songs.
   if (req.method === "POST" && (url.pathname === "/api/track-ended" || url.pathname === "/api/track-error")) {
     const { videoId } = await readBody(req);
+    if (PUBLIC && !isAdmin(req, url)) return send(204); // visitors' players don't drive the show; the server's song clock does
     channelTrackEnded(String(videoId || ""), url.pathname.endsWith("error"));
     return send(204);
   }
@@ -779,13 +868,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/spoken") {
-    finishSpeaking?.();
+    if (!PUBLIC) finishSpeaking?.(); // in public mode the server times her speech itself
     return send(204);
   }
 
-  // The page couldn't play the station: find another one of the same style.
+  // The page couldn't play the station: find another one of the same style (at most every 2 minutes in public mode).
   if (req.method === "POST" && url.pathname === "/api/station-failed") {
-    if (station) await tuneTo(station.tags.split(",")[0] || START_STATION);
+    if (station && (!PUBLIC || Date.now() - stationSince > 120_000)) await tuneTo(station.tags.split(",")[0] || START_STATION);
     return send(204);
   }
 
@@ -814,6 +903,7 @@ const server = http.createServer(async (req, res) => {
   send(404, "not found");
 });
 
-server.listen(PORT, "127.0.0.1", () => {
+server.listen(PORT, HOST, () => {
   console.log(`Lyra hologram: http://localhost:${PORT}  (press "Go live" on the page)`);
+  if (PUBLIC) console.log(`Public mode: visitors can listen and chat. Your controls: open the site with ?admin=<ADMIN_KEY>`);
 });

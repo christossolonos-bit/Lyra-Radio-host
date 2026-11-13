@@ -1,0 +1,6 @@
+# Railway build: Node 22 plus ffmpeg (ffprobe reads song titles and voice-clip lengths; ffmpeg joins podcast recordings).
+[phases.setup]
+nixPkgs = ["nodejs_22", "ffmpeg"]
+
+[start]
+cmd = "npm start"

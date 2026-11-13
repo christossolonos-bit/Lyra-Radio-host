@@ -8,7 +8,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const DIR = path.join(here, "..", "recordings");
+const DIR = process.env.DATA_DIR ? path.join(process.env.DATA_DIR, "recordings") : path.join(here, "..", "recordings");
 const PARTS = path.join(DIR, ".parts");
 const ENABLED = process.env.PODCAST_RECORD !== "0";
 

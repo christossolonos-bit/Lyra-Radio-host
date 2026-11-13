@@ -41,8 +41,11 @@ export async function findStations(words) {
     const url = `${DIRECTORY}?${new URLSearchParams({ ...Object.fromEntries(query), ...extra })}`;
     const res = await fetch(url, { headers: { "User-Agent": "lyra-live/0.1" } });
     if (!res.ok) continue;
+    // a public https site can't play http:// streams (browsers block them), so it only uses https ones
+    const httpsOnly = Boolean(process.env.ADMIN_KEY);
     const found = (await res.json()).filter(
-      (s) => s.url_resolved && ["MP3", "AAC", "AAC+", "OGG"].includes(s.codec) && (s.bitrate === 0 || s.bitrate >= 64),
+      (s) => s.url_resolved && ["MP3", "AAC", "AAC+", "OGG"].includes(s.codec) && (s.bitrate === 0 || s.bitrate >= 64) &&
+        (!httpsOnly || s.url_resolved.startsWith("https://")),
     );
     if (found.length) return found;
   }

@@ -41,6 +41,24 @@ You need **Node.js 22+** and **FFmpeg** (`ffplay` and `ffprobe` on your PATH).
 - **Streamer mode**: while a known song plays, its music video (muted, since the radio is the sound) or its album artwork fills the screen, and Lyra moves to the bottom-left corner like a facecam.
 - Keys: `H` hides everything but Lyra, `B` full body, `V` lip sync or video loop, `S` streamer mode on or off, `P` Patch on camera six, `L` vertical (TikTok) layout, `M` mirror (for Pepper's ghost glass), `F` fullscreen.
 
+### Putting her on the web (Railway)
+
+Lyra can run as her own public website. Each visitor's browser plays the radio station straight from the station, the way radio directory sites do, so nothing is re-broadcast through a video platform.
+
+1. On [railway.app](https://railway.app), create a project from this GitHub repo. `nixpacks.toml` installs Node 22 and ffmpeg, and it starts with `npm start`.
+2. In the service's **Variables**, add everything from your `.env` (the NVIDIA, Fish, YouTube and channel settings), plus:
+   - `ADMIN_KEY`: a long random password. Setting it turns on **public mode**.
+   - `DATA_DIR=/data`, and add a **Volume** mounted at `/data`, so her memory and the podcast recordings survive redeploys.
+3. Under **Settings → Networking**, click **Generate Domain**.
+4. Open `https://your-domain/?admin=YOUR_ADMIN_KEY` once. That browser keeps your controls (Radio/Podcast, music source, chats, Patch).
+
+In public mode:
+- **Visitors** press **LISTEN** and can chat: one message every 6 seconds, up to 200 characters, and no cast names.
+- **The server keeps time**, so no visitor can skip songs or cut her off. Late joiners hear his songs from the same point as everyone else.
+- **Nobody listening = quiet**: no talk breaks, no podcast, no costs. `MAX_TALKS_PER_HOUR` caps her talking if chat gets very busy.
+- **Only https stations are used**, because browsers block `http://` streams on an `https://` site.
+- **She still chooses freely**: songs, stations, guests, podcast or radio. If she decides on the podcast during a song, the guest comes in when the song ends.
+
 ### Going live on YouTube
 
 1. Set `MUSIC_CHANNEL` to your music channel (an "Artist – Topic" channel works) and press **My music**. Lyra plays only your own songs, with each song's video behind her. Real stations and other people's videos would get the stream muted or struck.

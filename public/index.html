@@ -175,6 +175,8 @@
     border-radius: 999px; border: 1px dashed var(--line); background: transparent; color: var(--muted); cursor: pointer; }
   .popout:hover { color: var(--ink); border-color: var(--cyan); }
   .popout[hidden] { display: none; }
+  /* Visitors on the public site: listen and chat only (your controls need the admin key) */
+  body.visitor :is(.modes, .sources, .popout, .link-form, .link-state, .keys) { display: none; }
   body.vertical .popout, body.silent .popout, body.silent .vol { display: none; }
   .ep { display: inline-block; width: fit-content; font-size: 11px; letter-spacing: .12em; color: #001418; background: #ffd27a;
     border-radius: 4px; padding: 2px 8px; font-weight: 700; text-transform: uppercase; }
@@ -357,6 +359,12 @@ if (params.get("layout") === "vertical") document.body.classList.add("vertical")
 // It shows everything but plays no sound and never reports "song ended" / "finished speaking":
 // the main page is the only sound source and the only one that drives the show.
 const SILENT = params.get("mute") === "1";
+// Public website: open it once with ?admin=YOUR_KEY and this browser keeps your controls (visitors only listen and chat).
+if (params.get("admin")) {
+  try { localStorage.setItem("lyra-admin", params.get("admin")); } catch {}
+  history.replaceState(null, "", location.pathname + location.search.replace(/[?&]admin=[^&]*/, "").replace(/^&/, "?"));
+}
+const adminKey = (() => { try { return localStorage.getItem("lyra-admin") || ""; } catch { return ""; } })();
 if (SILENT) {
   document.body.classList.add("silent");
   document.querySelector("#start p").textContent = "Silent view: the main page plays the sound";
@@ -541,7 +549,7 @@ function speak(text, url, who = "Lyra") {
 }
 
 // ---------- Server events ----------
-const events = new EventSource("/api/events");
+const events = new EventSource(`/api/events${adminKey ? `?key=${encodeURIComponent(adminKey)}` : ""}`);
 events.onmessage = (e) => {
   const ev = JSON.parse(e.data);
   if (ev.type === "hello") {
@@ -553,6 +561,12 @@ events.onmessage = (e) => {
     }
     applyMode(ev.mode);
     if (ev.live) $("goLive").textContent = "JOIN";
+    // public website, and this browser isn't the admin's: a listener's page (listen + chat only)
+    if (ev.public && !ev.admin && !SILENT) {
+      document.body.classList.add("visitor");
+      $("goLive").textContent = "LISTEN";
+      document.querySelector("#start p").textContent = "Live radio and podcast from Death Valley";
+    }
   }
   if (ev.type === "mode") applyMode(ev.mode);
   if (ev.type === "guest") showGuest(ev);
@@ -597,6 +611,7 @@ let hasSongMedia = false;
 // One YouTube player for the background. A station's music video plays MUTED (the station is the sound);
 // one of his own songs plays WITH sound (the video is the music), and tells the server when it ends.
 let ytReady = false, currentVideo = "", pendingVideo = null;
+let songClock = Date.now(); // when the current song started, by the server's clock
 window.onYouTubeIframeAPIReady = () => {
   ytReady = true;
   if (pendingVideo) playVideo(...pendingVideo);
@@ -606,7 +621,8 @@ function playVideo(videoId, own) {
   currentVideo = videoId;
   if (!ytReady || !ctx) { pendingVideo = [videoId, own]; return; } // wait for the API and for Go Live
   pendingVideo = null;
-  const start = own ? 0 : 15;
+  // his songs start where the show is (so a late joiner hears the same moment as everyone else); station videos at 15 s
+  const start = own ? Math.max(0, Math.floor((Date.now() - songClock) / 1000)) : 15;
   if (!ytPlayer) {
     ytPlayer = new YT.Player("video", {
       videoId, host: "https://www.youtube-nocookie.com",
@@ -641,7 +657,8 @@ function stopVideo() {
   ytPlayer?.stopVideo?.();
 }
 
-function showSongMedia({ videoId, art, own }) {
+function showSongMedia({ videoId, art, own, elapsed }) {
+  if (videoId && videoId !== currentVideo) songClock = Date.now() - (elapsed || 0) * 1000;
   for (const id of ["art", "artBlur"]) art ? $(id).setAttribute("src", art) : $(id).removeAttribute("src");
   if (videoId && (videoId !== currentVideo || Boolean(own) !== ownMusic)) playVideo(videoId, Boolean(own));
   else if (!videoId) stopVideo();
@@ -780,7 +797,11 @@ function addLog(who, text, cls = "", color = "") {
 function post(url, body) {
   // the silent view only watches: it never drives the show (start, finished speaking, song ended, station failed)
   if (SILENT && /\/api\/(start|spoken|track-ended|track-error|station-failed)$/.test(url)) return Promise.resolve();
-  return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).catch(() => {});
+  const headers = { "Content-Type": "application/json", ...(adminKey ? { "X-Admin-Key": adminKey } : {}) };
+  return fetch(url, { method: "POST", headers, body: JSON.stringify(body || {}) })
+    .then((r) => { if (r.status === 429 && url === "/api/chat") addLog("", "Slow down a little: one message every few seconds.", "sys");
+      else if (r.status === 400 && url === "/api/chat") r.text().then((t) => addLog("", t, "sys")); return r; })
+    .catch(() => {});
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
 function localStorageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }

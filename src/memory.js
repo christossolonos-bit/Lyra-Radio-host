@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const FILE = path.join(here, "..", "data", "viewers.json");
+const FILE = path.join(process.env.DATA_DIR || path.join(here, "..", "data"), "viewers.json"); // DATA_DIR = a Railway volume
 const NEW_VISIT_HOURS = 3; // back after this long = a new visit
 const MAX_FACTS = 8;
 

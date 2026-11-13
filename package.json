@@ -9,7 +9,11 @@
     "radio": "node --env-file=.env src/radio.js",
     "radio:playlist": "node --env-file=.env src/radio-playlist.js",
     "holo": "node --env-file=.env src/server.js",
+    "start": "node --env-file-if-exists=.env src/server.js",
     "prompt": "node --env-file-if-exists=.env src/show-prompt.js"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "dependencies": {
     "openai": "^7.56.0",
