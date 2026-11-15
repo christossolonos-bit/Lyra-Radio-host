@@ -568,6 +568,7 @@ events.onmessage = (e) => {
   if (ev.type === "hello") {
     names = { radio: ev.show, podcast: ev.podcast };
     if (ev.tiktokUser && !$("ttInput").value) $("ttInput").value = `@${ev.tiktokUser.replace(/^@/, "")}`;
+    $("ttForm").hidden = !ev.tiktok; // TikTok is off unless TIKTOK_USERNAME / TIKTOK_SIGN_API_KEY are set
     if (ev.episode) {
       $("ep").textContent = `New · Episode ${ev.episode}${ev.episodeTitle ? `: ${ev.episodeTitle}` : ""}`;
       $("ep").hidden = false;

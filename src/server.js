@@ -874,6 +874,7 @@ const server = http.createServer(async (req, res) => {
     res.write(`data: ${JSON.stringify({ type: "hello", live, mode, show: SHOW_NAME, podcast: PODCAST_NAME, model: MODEL,
       public: PUBLIC, admin: isAdmin(req, url),
       tiktokUser: ttWatch || process.env.TIKTOK_USERNAME || "",
+      tiktok: Boolean(process.env.TIKTOK_USERNAME || process.env.TIKTOK_SIGN_API_KEY), // TikTok box only when it's set up
       episode: process.env.LATEST_EPISODE || "", episodeTitle: process.env.LATEST_EPISODE_TITLE || "" })}\n\n`);
     if (station) res.write(`data: ${JSON.stringify(stationEvent())}\n\n`);
     if (nowPlaying) res.write(`data: ${JSON.stringify({ type: "nowplaying", title: nowPlaying })}\n\n`);
